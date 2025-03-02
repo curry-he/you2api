@@ -1,5 +1,5 @@
 # 使用官方 Go 镜像作为构建环境
-FROM golang:1.22-alpine AS builder
+FROM golang:1.23-alpine AS builder
 
 # 设置工作目录
 WORKDIR /app
@@ -10,7 +10,7 @@ COPY go.mod go.sum ./
 RUN go mod tidy
 # 下载依赖
 RUN go mod download
-RUN go get github.com/PuerkitoBio/goquery v1.9.3
+
 
 # 复制源代码
 COPY . .
