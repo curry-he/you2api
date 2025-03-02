@@ -7,6 +7,8 @@ WORKDIR /app
 # 复制 go.mod 和 go.sum
 COPY go.mod go.sum ./
 
+go clean -modcache
+go mod tidy
 # 下载依赖
 RUN go mod download
 
