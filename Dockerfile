@@ -10,7 +10,7 @@ COPY go.mod go.sum ./
 RUN go mod tidy
 # 下载依赖
 RUN go mod download
-RUN go get github.com/PuerkitoBio/goquery
+RUN go get github.com/PuerkitoBio/goquery v1.9.3
 
 # 复制源代码
 COPY . .
