@@ -200,20 +200,20 @@ func YouModelsHandler(w http.ResponseWriter, r *http.Request) {
     client := &http.Client{}
     resp, err := client.Do(youReq)
     if err != nil {
-        http.Error(w, fmt.Sprintf("Failed to fetch you.com page: %v", err), http.StatusInternalServerError)
+        http.Error(w, fmt.Sprintf("Failed to fetch you.com page: %v", err), 500)
         return
     }
     defer resp.Body.Close()
 
     if resp.StatusCode != http.StatusOK {
         body, _ := io.ReadAll(resp.Body)
-        http.Error(w, fmt.Sprintf("Failed to fetch you.com page, status: %d, body: %s", resp.StatusCode, string(body)), resp.StatusInternalServerError)
+        http.Error(w, fmt.Sprintf("Failed to fetch you.com page, status: %d, body: %s", resp.StatusCode, string(body)), 500)
         return
     }
 
     doc, err := goquery.NewDocumentFromReader(resp.Body)
     if err != nil {
-        http.Error(w, fmt.Sprintf("Failed to parse HTML: %v", err), http.StatusInternalServerError)
+        http.Error(w, fmt.Sprintf("Failed to parse HTML: %v", err), 500)
         return
     }
 
