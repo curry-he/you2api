@@ -189,7 +189,7 @@ func YouModelsHandler(w http.ResponseWriter, r *http.Request) {
     dsToken := strings.TrimPrefix(authHeader, "Bearer ")
 
     // Fetch you.com page
-    youReq, _ := http.NewRequest("GET", "https://you.com/youchat", nil) // Or the correct page URL
+    youReq, _ := http.NewRequest("GET", "https://you.com, nil) // Or the correct page URL
     cookies := getCookies(dsToken)
     var cookieStrings []string
     for name, value := range cookies {
@@ -669,22 +669,6 @@ func handleStreamingResponse(w http.ResponseWriter, youReq *http.Request) {
     doneBytes, _ := json.Marshal(doneResp)
     fmt.Fprintf(w, "data: %s\n\n", doneBytes)
     flusher.Flush()
-}
-
-// convertSystemToUser converts system role messages to user role messages.
-func convertSystemToUser(messages []Message) []Message {
-    convertedMessages := make([]Message, len(messages))
-    for i, msg := range messages {
-        if msg.Role == "system" {
-            convertedMessages[i] = Message{
-                Role:    "user", // 将 system 转换为 user
-                Content: "System: " + msg.Content,
-            }
-        } else {
-            convertedMessages[i] = msg
-        }
-    }
-    return convertedMessages
 }
 
 // getNonce retrieves a nonce from the /api/nonce endpoint.
