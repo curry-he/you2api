@@ -170,6 +170,7 @@ type UploadResponse struct {
 const MaxQueryLength = 2000
 
 // YouModelsHandler fetches the model list from you.com by parsing the DOM.
+// YouModelsHandler fetches the model list from you.com by parsing the DOM.
 func YouModelsHandler(w http.ResponseWriter, r *http.Request) {
     w.Header().Set("Content-Type", "application/json")
     w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -179,7 +180,6 @@ func YouModelsHandler(w http.ResponseWriter, r *http.Request) {
         w.WriteHeader(http.StatusOK)
         return
     }
-
     authHeader := r.Header.Get("Authorization")
     if !strings.HasPrefix(authHeader, "Bearer ") {
         http.Error(w, "Missing or invalid authorization header", http.StatusUnauthorized)
@@ -197,6 +197,16 @@ func YouModelsHandler(w http.ResponseWriter, r *http.Request) {
     youReq.Header.Add("Cookie", strings.Join(cookieStrings, ";"))
     youReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 Edg/133.0.0.0") // Mimic browser
 
+    // === 添加调试日志 ===
+    fmt.Println("\n=== YouModelsHandler 调试日志 ===")
+    fmt.Println("请求 URL:", youReq.URL.String())
+    fmt.Println("请求头 (包括 Cookies):")
+    for key, values := range youReq.Header {
+        fmt.Printf("%s: %v\n", key, values)
+    }
+    fmt.Println("=========================\n")
+    // === 调试日志结束 ===
+
     client := &http.Client{}
     resp, err := client.Do(youReq)
     if err != nil {
@@ -204,6 +214,12 @@ func YouModelsHandler(w http.ResponseWriter, r *http.Request) {
         return
     }
     defer resp.Body.Close()
+
+    // === 添加调试日志 ===
+    fmt.Println("\n=== YouModelsHandler 调试日志 ===")
+    fmt.Println("You.com 响应状态码:", resp.StatusCode)
+    fmt.Println("=========================\n")
+    // === 调试日志结束 ===
 
     if resp.StatusCode != http.StatusOK {
         body, _ := io.ReadAll(resp.Body)
@@ -213,6 +229,11 @@ func YouModelsHandler(w http.ResponseWriter, r *http.Request) {
 
     doc, err := goquery.NewDocumentFromReader(resp.Body)
     if err != nil {
+        // === 添加调试日志 ===
+        fmt.Println("\n=== YouModelsHandler 调试日志 ===")
+        fmt.Println("goquery 解析 HTML 失败:", err)
+        fmt.Println("=========================\n")
+        // === 调试日志结束 ===
         http.Error(w, fmt.Sprintf("Failed to parse HTML: %v", err), 500)
         return
     }
@@ -231,6 +252,12 @@ func YouModelsHandler(w http.ResponseWriter, r *http.Request) {
             })
         }
     })
+
+    // === 添加调试日志 ===
+    fmt.Println("\n=== YouModelsHandler 调试日志 ===")
+    fmt.Printf("找到模型数量: %d\n", len(models))
+    fmt.Println("=========================\n")
+    // === 调试日志结束 ===
 
     response := ModelResponse{
         Object: "list",
