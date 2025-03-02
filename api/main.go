@@ -687,17 +687,6 @@ func convertSystemToUser(messages []Message) []Message {
     return convertedMessages
 }
 
-// countTokens 估算消息列表的 token 数量。
-func countTokens(messages []Message) (int, error) {
-    combinedContent := ""
-    for _, msg := range messages {
-        combinedContent += msg.Content
-    }
-    // 简单的 token 估算方法：假设平均每个 token 4 个字符
-    tokenCount := len(combinedContent) / 4
-    return tokenCount, nil
-}
-
 // getNonce retrieves a nonce from the /api/nonce endpoint.
 func getNonce(dsToken string) (*NonceResponse, error) {
     nonceURL := "https://you.com/api/nonce"
