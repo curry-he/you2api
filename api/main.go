@@ -188,7 +188,7 @@ func YouModelsHandler(w http.ResponseWriter, r *http.Request) {
     dsToken := strings.TrimPrefix(authHeader, "Bearer ")
 
     // Fetch you.com page
-    youReq, _ := http.NewRequest("GET", "https://you.com, nil) // Or the correct page URL
+    youReq, _ := http.NewRequest("GET", "https://you.com", nil) // Or the correct page URL
     cookies := getCookies(dsToken)
     var cookieStrings []string
     for name, value := range cookies {
