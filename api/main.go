@@ -98,7 +98,7 @@ type ModelDetail struct {
     OwnedBy string `json:"owned_by"`
 }
 
-// modelMap 存储 OpenAI 模型名称到 You.com 模型名称的映射。
+// modelMap 存储 OpenAI 模型名称到 You.com 模型名称的映射。 (OpenAI -> You.com)
 var modelMap = map[string]string{
     "deepseek-reasoner":       "deepseek_r1",
     "deepseek-chat":           "deepseek_v3",
@@ -123,9 +123,14 @@ var modelMap = map[string]string{
     "qwen-2.5-72b":            "qwen2p5_72b",
     "qwen-2.5-coder-32b":      "qwen2p5_coder_32b",
     "command-r-plus":          "command_r_plus",
-    "claude-3-7-sonnet":       "claude_3_7_sonnet",
+    "claude-3-7-sonnet":       "claude_3_7_sonnet", // 添加显式映射
     "claude-3-7-sonnet-think": "claude_3_7_sonnet_thinking",
+    "grok-2":                  "grok_2",          // 添加显式映射
+    "gemini-2-flash":          "gemini_2_flash",      // 添加显式映射
 }
+
+// reverseModelMap 存储 You.com 模型名称到 OpenAI 模型名称的映射。 (You.com -> OpenAI)
+var reverseModelMap map[string]string
 
 // Dynamic model list and map
 var dynamicModelMap = make(map[string]string)
@@ -166,45 +171,42 @@ type UploadResponse struct {
 const MaxQueryLength = 2000
 
 func init() {
+    reverseModelMap = getReverseModelMap() // 初始化反向映射
+
     // 尝试动态获取模型列表
-    dynamicMap, dynamicList, err := fetchModelList("") // 修正: fetchModelList 需要 dsToken 参数，但init函数中无法获取，暂时传空字符串，后续考虑如何传递或初始化
-    if err == nil && len(dynamicMap) > 0 && len(dynamicList) > 0 {
-        dynamicModelMap = dynamicMap
+    youModelMap, dynamicList, err := fetchModelList("") // fetchModelList 现在返回 You.com 模型 map
+    if err == nil && len(youModelMap) > 0 && len(dynamicList) > 0 {
+        dynamicModelMap = youModelMap // 动态模型映射使用 You.com 模型名称 -> You.com 模型名称 (自身)
         dynamicModels = dynamicList
         useDynamicModels = true
         fmt.Println("Successfully fetched dynamic model list from you.com")
     } else {
         fmt.Println("Failed to fetch dynamic model list, using default model map.", err)
-        // Fallback to static models if dynamic fetch fails. Create ModelDetail list from static modelMap
+        // Fallback to static models if dynamic fetch fails.
         staticModels := make([]ModelDetail, 0, len(modelMap))
         created := time.Now().Unix()
-        for openAIModelName := range modelMap { // 遍历 OpenAI 模型名称
+        for openAIModelName := range modelMap { // 遍历 OpenAI 模型名称 (静态 modelMap 的键)
             staticModels = append(staticModels, ModelDetail{
-                ID:      openAIModelName, // 使用 OpenAI 模型名称作为 ID
+                ID:      openAIModelName, //  ModelDetail ID 存储 OpenAI 模型名称 (用于 /v1/models 响应)
                 Object:  "model",
                 Created: created,
-                OwnedBy: "you.com", // 默认 OwnedBy
+                OwnedBy: "you.com",
             })
         }
-        dynamicModels = staticModels // 使用 staticModels 填充 dynamicModels 以便后续统一处理
+        dynamicModels = staticModels
     }
 }
 
 // Handler 是处理所有传入 HTTP 请求的主处理函数。
 func Handler(w http.ResponseWriter, r *http.Request) {
-    // 处理 /v1/models 请求（列出可用模型）
     if r.URL.Path == "/v1/models" || r.URL.Path == "/api/v1/models" {
         handleModelsRequest(w, r)
         return
     }
-
-    // 处理非 /v1/chat/completions 请求（服务状态检查）
     if r.URL.Path != "/v1/chat/completions" && r.URL.Path != "/none/v1/chat/completions" && r.URL.Path != "/such/chat/completions" {
         handleStatusCheck(w, r)
         return
     }
-
-    // 处理 chat completions 请求
     handleChatCompletions(w, r)
 }
 
@@ -218,20 +220,9 @@ func handleModelsRequest(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    // 创建 OpenAI 格式的模型列表响应
-    openaiModels := make([]ModelDetail, 0, len(dynamicModels))
-    for _, model := range dynamicModels {
-        openaiModels = append(openaiModels, ModelDetail{
-            ID:      reverseMapModelName(model.ID), // 转换为 OpenAI 模型名称
-            Object:  model.Object,
-            Created: model.Created,
-            OwnedBy: model.OwnedBy,
-        })
-    }
-
     response := ModelResponse{
         Object: "list",
-        Data:   openaiModels, // 使用 OpenAI 格式的模型列表
+        Data:   dynamicModels, // dynamicModels 的 ModelDetail.ID 已经存储了 OpenAI 模型名称
     }
     json.NewEncoder(w).Encode(response)
 }
@@ -268,13 +259,13 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
         http.Error(w, "Invalid request body", http.StatusBadRequest)
         return
     }
-    originalModel = openAIReq.Model
+    originalModel = openAIReq.Model // 保存原始的 OpenAI 模型名称
 
-    // 映射 OpenAI 模型名称到 You.com 模型名称
+    // 映射 OpenAI 模型名称到 You.com 模型名称 (request conversion)
     youModelName := mapModelName(openAIReq.Model)
-    openAIReq.Model = youModelName // 使用 You.com 模型名称替换 OpenAI 模型名称
+    openAIReq.Model = youModelName // **重要:  替换请求体中的模型名称为 You.com 格式**
 
-    // 转换 system 消息为 user 消息 
+    // 转换 system 消息为 user 消息
     openAIReq.Messages = convertSystemToUser(openAIReq.Messages)
 
     // 构建 You.com 聊天历史
@@ -366,7 +357,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    // 构建查询参数
+    // 构建查询参数 (You.com API request)
     q := youReq.URL.Query()
 
     // 设置基本参数
@@ -382,7 +373,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
     q.Add("conversationTurnId", conversationTurnId)
     q.Add("pastChatLength", fmt.Sprintf("%d", len(chatHistory)))
     q.Add("selectedChatMode", "custom")
-    q.Add("selectedAiModel", openAIReq.Model) // 使用 You.com 模型名称 (已替换)
+    q.Add("selectedAiModel", openAIReq.Model) // **使用已转换为 You.com 格式的模型名称**
     q.Add("enable_agent_clarification_questions", "true")
     q.Add("traceId", traceId)
     q.Add("use_nested_youchat_updates", "true")
@@ -562,7 +553,7 @@ func handleNonStreamingResponse(w http.ResponseWriter, youReq *http.Request, ori
         ID:      "chatcmpl-" + fmt.Sprintf("%d", time.Now().Unix()),
         Object:  "chat.completion",
         Created: time.Now().Unix(),
-        Model:   reverseMapModelName(mapModelName(originalModelName)), // 修正: 使用 originalModelName
+        Model:   originalModelName, // 使用 originalModelName (OpenAI 风格)
         Choices: []OpenAIChoice{
             {
                 Message: Message{
@@ -612,7 +603,7 @@ func handleStreamingResponse(w http.ResponseWriter, youReq *http.Request, origin
                 ID:      "chatcmpl-" + fmt.Sprintf("%d", time.Now().Unix()),
                 Object:  "chat.completion.chunk",
                 Created: time.Now().Unix(),
-                Model:   reverseMapModelName(mapModelName(originalModelName)), // 修正: 使用 originalModelName
+                Model:   originalModelName, // 使用 originalModelName (OpenAI 风格)
                 Choices: []Choice{
                     {
                         Delta: Delta{
@@ -724,7 +715,7 @@ func convertSystemToUser(messages []Message) []Message {
     var newMessages []Message
     var systemFound bool
 
-    // 收集所有 system 消息
+    // 收集所有 system 消息 
     for _, msg := range messages {
         if msg.Role == "system" {
             if systemContent.Len() > 0 {
@@ -759,7 +750,8 @@ func fetchModelList(dsToken string) (map[string]string, []ModelDetail, error) {
         }
         youReq.Header.Add("Cookie", strings.Join(cookieStrings, ";"))
     }
-    youReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 Edg/133.0.0.0") // Mimic browser
+    youReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 Edg/133.0.0.0")
+
     client := &http.Client{}
     resp, err := client.Do(youReq)
     if err != nil {
@@ -770,39 +762,40 @@ func fetchModelList(dsToken string) (map[string]string, []ModelDetail, error) {
         body, _ := io.ReadAll(resp.Body)
         return nil, nil, fmt.Errorf("failed to fetch you.com page, status: %d, body: %s", resp.StatusCode, string(body))
     }
+
     doc, err := goquery.NewDocumentFromReader(resp.Body)
     if err != nil {
         return nil, nil, fmt.Errorf("failed to parse HTML: %w", err)
     }
+
     script := doc.Find("script#__NEXT_DATA__").Text()
     var nextData NextData
     if err := json.Unmarshal([]byte(script), &nextData); err != nil {
         return nil, nil, fmt.Errorf("failed to parse JSON: %w", err)
     }
-    youModelMap := make(map[string]string) //  You.com 模型名称 -> You.com 模型名称 (自身映射)
-    openaiModelMap := make(map[string]string) // OpenAI 模型名称 -> You.com 模型名称
+
+    youModelMap := make(map[string]string) // You.com 模型名称 -> You.com 模型名称 (自身映射)
     models := make([]ModelDetail, 0)
     created := time.Now().Unix()
     for _, model := range nextData.Props.PageProps.AiModels {
         youModelID := model.ID
         openaiModelID := reverseMapYouModelNameToOpenAI(youModelID) // 转换为 OpenAI 风格
-        youModelMap[youModelID] = youModelID                        // You.com 模型名称自身映射
-        openaiModelMap[openaiModelID] = youModelID                 // OpenAI 模型名称到 You.com 模型名称的映射
+
+        youModelMap[openaiModelID] = youModelID //  OpenAI 模型名称 -> You.com 模型名称 (用于动态映射)
+
         models = append(models, ModelDetail{
-            ID:      youModelID, // 仍然使用 You.com 模型 ID 作为 ModelDetail 的 ID (内部使用)
+            ID:      openaiModelID, // **ModelDetail ID 存储 OpenAI 模型名称 (用于 /v1/models 响应)**
             Object:  "model",
             Created: created,
             OwnedBy: model.Company,
         })
     }
-    // 使用新构建的映射
-    modelMap = openaiModelMap       // 更新 modelMap 为 OpenAI 模型名称到 You.com 模型名称的映射
-    dynamicModelMap = openaiModelMap // 动态模型映射也更新
-    return youModelMap, models, nil // 返回 You.com 模型名称的映射和 ModelDetail 列表
+
+    dynamicModelMap = youModelMap // 更新动态模型映射为 OpenAI -> You.com
+    return youModelMap, models, nil // 返回 You.com 模型名称的映射 (实际是 OpenAI -> You.com 映射) 和 ModelDetail 列表
 }
 
-// reverseMapYouModelNameToOpenAI 将 You.com 模型 ID 转换为 OpenAI 风格的模型名称
-// 规则：将模型 ID 中的 '-' 和 '.' 替换为 '_', 并进行其他必要的格式统一
+// reverseMapYouModelNameToOpenAI 将 You.com 模型 ID 转换为 OpenAI 风格的模型名称 (显式映射 + 正则)
 func reverseMapYouModelNameToOpenAI(youModelID string) string {
     // 使用正则表达式将 '-' 和 '.' 替换为 '_'
     var modelIDRegex = regexp.MustCompile(`[-.]`)
@@ -812,13 +805,13 @@ func reverseMapYouModelNameToOpenAI(youModelID string) string {
     // 去除首尾的下划线
     sanitizedModelID = strings.Trim(sanitizedModelID, "_")
 
-    // 显式映射 You.com 模型 ID 到 OpenAI 模型名称
+    // 显式映射 You.com 模型 ID 到 OpenAI 模型名称 (添加 grok_2, gemini_2_flash, claude-3-7-sonnet)
     explicitMap := map[string]string{
         "openai_o3_mini_high":      "o3-mini-high",
         "openai_o3_mini_medium":    "o3-mini-medium",
         "openai_o1":                "o1",
-        "openai_o1_mini":           "o1-mini",
         "openai_o1_preview":        "o1-preview",
+        "openai_o1_mini":           "o1-mini",
         "gpt_4o":                   "gpt-4o",
         "gpt_4o_mini":              "gpt-4o-mini",
         "gpt_4_turbo":              "gpt-4-turbo",
@@ -835,61 +828,53 @@ func reverseMapYouModelNameToOpenAI(youModelID string) string {
         "qwen2p5_72b":               "qwen-2.5-72b",
         "qwen2p5_coder_32b":         "qwen-2.5-coder-32b",
         "command_r_plus":             "command-r-plus",
-        "claude_3_7_sonnet":          "claude-3-7-sonnet",
+        "claude_3_7_sonnet":          "claude-3-7-sonnet", // 
         "claude_3_7_sonnet_thinking": "claude-3-7-sonnet-think",
+        "grok_2":                  "grok-2",          // 
+        "gemini_2_flash":          "gemini-2。0-flash",      // 
         "deepseek_r1":                "deepseek-reasoner",
         "deepseek_v3":                "deepseek-chat",
-        "grok_1":                     "grok-1",
-        "grok_0":                     "grok-0",
         "mixtral_8x22b":              "mixtral-8x22b",
         "mistral_medium_2402":        "mistral-medium-2402",
         "mistral_small_2402":         "mistral-small-2402",
-        "nous_hermes_2_mixtral_8x22b":"nous-hermes-2-mixtral-8x22b",
-        "nous_hermes_2_mixtral":      "nous-hermes-2-mixtral",
-        "nous_hermes_2":              "nous-hermes-2",
-        "nous_hermes":                "nous-hermes",
-
     }
-
     if openaiModelName, exists := explicitMap[sanitizedModelID]; exists {
         return openaiModelName
     }
 
-    // 默认返回 OpenAI 风格的名称 (即使没有显式映射)
-    return sanitizedModelID
+    return sanitizedModelID // 默认返回 OpenAI 风格
 }
 
-// getReverseModelMap 创建并返回 modelMap 的反向映射（You.com 模型名称 -> OpenAI 模型名称）。
+// getReverseModelMap 创建并返回 You.com 模型名称 -> OpenAI 模型名称 的反向映射。
 func getReverseModelMap() map[string]string {
     reverse := make(map[string]string, len(modelMap))
-    for k, v := range modelMap {
-        reverse[v] = k
+    for openaiName, youName := range modelMap { // 注意这里反转了键值
+        reverse[youName] = openaiName
     }
     return reverse
 }
 
-// mapModelName 将 OpenAI 模型名称映射到 You.com 模型名称。
+// mapModelName 将 OpenAI 模型名称映射到 You.com 模型名称。 (OpenAI -> You.com)
 func mapModelName(openAIModel string) string {
     if useDynamicModels {
-        if mappedModel, exists := dynamicModelMap[openAIModel]; exists {
+        if mappedModel, exists := dynamicModelMap[openAIModel]; exists { // dynamicModelMap 现在是 OpenAI -> You.com
             return mappedModel
         }
     } else {
-        if mappedModel, exists := modelMap[openAIModel]; exists {
+        if mappedModel, exists := modelMap[openAIModel]; exists { // 静态 modelMap 也是 OpenAI -> You.com
             return mappedModel
         }
     }
-    return "deepseek_v3" // 默认模型
+    return "deepseek_v3" // 默认模型 (You.com name)
 }
 
-// reverseMapModelName 将 You.com 模型名称映射回 OpenAI 模型名称。
+// reverseMapModelName 将 You.com 模型名称映射回 OpenAI 模型名称。 (You.com -> OpenAI)
 func reverseMapModelName(youModel string) string {
-    reverseMap := getReverseModelMap() // 始终使用静态的反向映射，因为动态映射主要用于正向映射
-    if mappedModel, exists := reverseMap[youModel]; exists {
-        return mappedModel // 返回 mappedModel 而不是 youModel
+    if mappedModel, exists := reverseModelMap[youModel]; exists { // reverseModelMap 是 You.com -> OpenAI
+        return mappedModel
     }
-    return "deepseek-chat" // 默认模型
+    return "deepseek-chat" // 默认模型 (OpenAI name - although default is not critical for reverse mapping)
 }
 
-// originalModel 存储原始的 OpenAI 模型名称。
+// originalModel 存储原始的 OpenAI 模型名称。 (unchanged)
 var originalModel string
