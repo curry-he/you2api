@@ -244,35 +244,35 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
         w.WriteHeader(http.StatusOK)
         return
     }
-    // 验证 Authorization 头部
+
+    // 验证 Authorization 头部 
     authHeader := r.Header.Get("Authorization")
     if !strings.HasPrefix(authHeader, "Bearer ") {
         http.Error(w, "Missing or invalid authorization header", http.StatusUnauthorized)
         return
     }
     dsToken := strings.TrimPrefix(authHeader, "Bearer ") // 提取 DS token
+
     // 解析 OpenAI 请求体
     var openAIReq OpenAIRequest
     if err := json.NewDecoder(r.Body).Decode(&openAIReq); err != nil {
         http.Error(w, "Invalid request body", http.StatusBadRequest)
         return
     }
-
-    fmt.Println("OpenAI Request Model:", openAIReq.Model) // *** 调试打印 1: 传入的 OpenAI 模型名称 ***
-
     originalModel = openAIReq.Model // 保存原始的 OpenAI 模型名称
+
     // 映射 OpenAI 模型名称到 You.com 模型名称 (request conversion)
     youModelName := mapModelName(openAIReq.Model)
-
-    fmt.Println("You.com Model Name after mapping:", youModelName) // *** 调试打印 2: 映射后的 You.com 模型名称 ***
-
     openAIReq.Model = youModelName // **重要:  替换请求体中的模型名称为 You.com 格式**
+
     // 转换 system 消息为 user 消息
     openAIReq.Messages = convertSystemToUser(openAIReq.Messages)
+
     // 构建 You.com 聊天历史
     var chatHistory []map[string]interface{}
     var sources []map[string]interface{}
     var lastAssistantMessage string
+
     // 处理历史消息（不包括最后一条）
     for _, msg := range openAIReq.Messages[:len(openAIReq.Messages)-1] {
         if msg.Role == "user" {
@@ -289,6 +289,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
                     http.Error(w, "Failed to get nonce", http.StatusInternalServerError)
                     return
                 }
+
                 // 创建临时文件
                 tempFile := fmt.Sprintf("temp_%s.txt", nonceResp.Uuid)
                 if err := os.WriteFile(tempFile, []byte(msg.Content), 0644); err != nil {
@@ -297,6 +298,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
                     return
                 }
                 defer os.Remove(tempFile)
+
                 // 上传文件
                 uploadResp, err := uploadFile(dsToken, tempFile)
                 if err != nil {
@@ -304,6 +306,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
                     http.Error(w, "Failed to upload file", http.StatusInternalServerError)
                     return
                 }
+
                 // 添加文件源信息
                 sources = append(sources, map[string]interface{}{
                     "source_type":   "user_file",
@@ -311,6 +314,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
                     "user_filename": uploadResp.UserFilename,
                     "size_bytes":    len(msg.Content),
                 })
+
                 // 在历史记录中使用文件引用
                 chatHistory = append(chatHistory, map[string]interface{}{
                     "question": fmt.Sprintf("Please review the attached file: %s", uploadResp.UserFilename),
@@ -327,6 +331,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
             lastAssistantMessage = msg.Content
         }
     }
+
     // 如果有最后一条 assistant 消息，添加到历史记录中
     if lastAssistantMessage != "" {
         chatHistory = append(chatHistory, map[string]interface{}{
@@ -335,12 +340,15 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
         })
     }
     chatHistoryJSON, _ := json.Marshal(chatHistory)
+
     // 创建 You.com API 请求
     youReq, _ := http.NewRequest("GET", "https://you.com/api/streamingSearch", nil)
+
     // 生成必要的 ID
     chatId := uuid.New().String()
     conversationTurnId := uuid.New().String()
     traceId := fmt.Sprintf("%s|%s|%s", chatId, conversationTurnId, time.Now().Format(time.RFC3339))
+
     // 处理最后一条消息
     lastMessage := openAIReq.Messages[len(openAIReq.Messages)-1]
     lastMessageTokens, err := countTokens([]Message{lastMessage})
@@ -348,8 +356,10 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
         http.Error(w, "Failed to count tokens", http.StatusInternalServerError)
         return
     }
+
     // 构建查询参数 (You.com API request)
     q := youReq.URL.Query()
+
     // 设置基本参数
     q.Add("page", "1")
     q.Add("count", "10")
@@ -364,12 +374,10 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
     q.Add("pastChatLength", fmt.Sprintf("%d", len(chatHistory)))
     q.Add("selectedChatMode", "custom")
     q.Add("selectedAiModel", openAIReq.Model) // **使用已转换为 You.com 格式的模型名称**
-
-    fmt.Println("You.com API Request Model Param:", q.Get("selectedAiModel")) // *** 调试打印 3: You.com API 模型参数 ***
-
     q.Add("enable_agent_clarification_questions", "true")
     q.Add("traceId", traceId)
     q.Add("use_nested_youchat_updates", "true")
+
     // 如果最后一条消息超过限制，使用文件上传
     if lastMessageTokens > MaxContextTokens {
         // 获取 nonce
@@ -379,6 +387,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
             http.Error(w, "Failed to get nonce", http.StatusInternalServerError)
             return
         }
+
         // 创建临时文件
         tempFile := fmt.Sprintf("temp_%s.txt", nonceResp.Uuid)
         if err := os.WriteFile(tempFile, []byte(lastMessage.Content), 0644); err != nil {
@@ -387,6 +396,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
             return
         }
         defer os.Remove(tempFile)
+
         // 上传文件
         uploadResp, err := uploadFile(dsToken, tempFile)
         if err != nil {
@@ -394,16 +404,19 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
             http.Error(w, "Failed to upload file", http.StatusInternalServerError)
             return
         }
+
         // 添加文件源信息
         sources = append(sources, map[string]interface{}{
             "source_type":   "user_file",
             "filename":      uploadResp.Filename,
             "user_filename": uploadResp.UserFilename,
-            "size_bytes":    len(msg.Content),
+            "size_bytes":    len(lastMessage.Content),
         })
+
         // 添加 sources 参数
         sourcesJSON, _ := json.Marshal(sources)
         q.Add("sources", string(sourcesJSON))
+
         // 使用文件引用作为查询
         q.Add("q", fmt.Sprintf("Please review the attached file: %s", uploadResp.UserFilename))
     } else {
@@ -416,12 +429,14 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
     }
     q.Add("chat", string(chatHistoryJSON))
     youReq.URL.RawQuery = q.Encode()
+
     fmt.Printf("\n=== 完整请求信息 ===\n")
     fmt.Printf("请求 URL: %s\n", youReq.URL.String())
     fmt.Printf("请求头:\n")
     for key, values := range youReq.Header {
         fmt.Printf("%s: %v\n", key, values)
     }
+
     // 设置请求头
     youReq.Header = http.Header{
         "sec-ch-ua-platform":         {"Windows"},
@@ -440,6 +455,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
         "Sec-Fetch-Dest":             {"empty"},
         "Host":                       {"you.com"},
     }
+
     // 设置 Cookie
     cookies := getCookies(dsToken)
     var cookieStrings []string
@@ -449,6 +465,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
     youReq.Header.Add("Cookie", strings.Join(cookieStrings, ";"))
     fmt.Printf("Cookie: %s\n", strings.Join(cookieStrings, ";"))
     fmt.Printf("===================\n\n")
+
     // 发送请求并获取响应
     client := &http.Client{}
     resp, err := client.Do(youReq)
@@ -458,8 +475,10 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
         return
     }
     defer resp.Body.Close()
+
     // 打印响应状态码
     fmt.Printf("响应状态码: %d\n", resp.StatusCode)
+
     // 如果状态码不是 200，打印响应内容
     if resp.StatusCode != http.StatusOK {
         body, _ := io.ReadAll(resp.Body)
@@ -467,6 +486,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
         http.Error(w, fmt.Sprintf("API returned status %d", resp.StatusCode), resp.StatusCode)
         return
     }
+
     // 根据 OpenAI 请求的 stream 参数选择处理函数
     if !openAIReq.Stream {
         handleNonStreamingResponse(w, youReq, originalModel)
@@ -777,16 +797,60 @@ func fetchModelList(dsToken string) (map[string]string, []ModelDetail, error) {
 
 // reverseMapYouModelNameToOpenAI 将 You.com 模型 ID 转换为 OpenAI 风格的模型名称 (显式映射 + 正则)
 func reverseMapYouModelNameToOpenAI(youModelID string) string {
-    // 1. Replace underscores with hyphens
-    sanitizedModelID := strings.ReplaceAll(youModelID, "_", "-")
+    // 1. Replace underscores with hyphens (general case, done first)
+    replacedHyphens := strings.ReplaceAll(youModelID, "_", "-")
 
-    // 2. 合并多个 '-' 为一个
-    sanitizedModelID = regexp.MustCompile("-+").ReplaceAllString(sanitizedModelID, "-")
+    // 2. Handle double underscore with number in between using regex
+    re := regexp.MustCompile(`-(\d+)-`) // Regex to find -digit- pattern (hyphen-digit-hyphen after step 1)
+    replacedDecimal := re.ReplaceAllStringFunc(replacedHyphens, func(match string) string {
+        // match will be like "-2-"
+        numberStr := match[1 : len(match)-1] // Extract the digit part "2"
+        return "-" + numberStr + ".0-"       // Replace with "-2.0-" 
+    })
 
-    // 3. 去除首尾的下划线 (实际上是去除首尾的连字符，因为前面已经替换为连字符)
-    sanitizedModelID = strings.Trim(sanitizedModelID, "-")
+    // 3. Dots between digits: No explicit replacement needed because requirement is to *keep* dots.
+    //    If there were dots between digits in the original `youModelID` (e.g., "gemini_2.5_pro"), 
+    //    and if you wanted to *preserve* them, string.ReplaceAll with "." would do nothing, which is desired.
+    
 
-    return sanitizedModelID
+// 显式映射 You.com 模型 ID 到 OpenAI 模型名称
+    explicitMap := map[string]string{
+        "openai_o3_mini_high":      "o3-mini-high",
+        "openai_o3_mini_medium":    "o3-mini-medium",
+        "openai_o1":                "o1",
+        "openai_o1_preview":        "o1-preview",
+        "openai_o1_mini":           "o1-mini",
+        "gpt_4o":                   "gpt-4o",
+        "gpt_4o_mini":              "gpt-4o-mini",
+        "gpt_4_turbo":              "gpt-4-turbo",
+        "gpt_3_5":                  "gpt-3.5-turbo",
+        "claude_3_opus":            "claude-3-opus",
+        "claude_3_sonnet":          "claude-3-sonnet",
+        "claude_3_5_sonnet":        "claude-3.5-sonnet",
+        "claude_3_5_haiku":         "claude-3.5-haiku",
+        "gemini_1_5_pro":           "gemini-1.5-pro",
+        "gemini_1_5_flash":         "gemini-1.5-flash",
+        "llama3_2_90b":             "llama-3.2-90b",
+        "llama3_1_405b":            "llama-3.1-405b",
+        "mistral_large_2":          "mistral-large-2",
+        "qwen2p5_72b":               "qwen-2.5-72b",
+        "qwen2p5_coder_32b":         "qwen-2.5-coder-32b",
+        "command_r_plus":             "command-r-plus",
+        "claude_3_7_sonnet":          "claude-3.7-sonnet",
+        "claude_3_7_sonnet_thinking": "claude-3.7-sonnet-thinking",
+        "grok_2":                      "grok-2",          
+        "gemini_2_flash":              "gemini-2.0-flash",     
+        "deepseek_r1":                "deepseek-r1",
+        "deepseek_v3":                "deepseek-chat",
+        "mixtral_8x22b":              "mixtral-8x22b",
+        "mistral_medium_2402":        "mistral-medium-2402",
+        "mistral_small_2402":         "mistral-small-2402",
+    }
+    if openaiModelName, exists := explicitMap[replacedDecimal]; exists {
+        return openaiModelName
+    }
+
+    return replacedDecimal
 }
 
     
