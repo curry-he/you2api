@@ -797,15 +797,23 @@ func fetchModelList(dsToken string) (map[string]string, []ModelDetail, error) {
 
 // reverseMapYouModelNameToOpenAI 将 You.com 模型 ID 转换为 OpenAI 风格的模型名称 (显式映射 + 正则)
 func reverseMapYouModelNameToOpenAI(youModelID string) string {
-    // 使用正则表达式将 '-' 和 '.' 替换为 '_'
-    var modelIDRegex = regexp.MustCompile(`[-.]`)
-    sanitizedModelID := modelIDRegex.ReplaceAllString(youModelID, "_")
-    // 合并多个 '_' 为一个
-    sanitizedModelID = regexp.MustCompile("_+").ReplaceAllString(sanitizedModelID, "_")
-    // 去除首尾的下划线
-    sanitizedModelID = strings.Trim(sanitizedModelID, "_")
+    // 1. Replace underscores with hyphens (general case, done first)
+    replacedHyphens := strings.ReplaceAll(youModelID, "_", "-")
 
-    // 显式映射 You.com 模型 ID 到 OpenAI 模型名称 (添加 grok_2, gemini_2_flash, claude-3-7-sonnet)
+    // 2. Handle double underscore with number in between using regex
+    re := regexp.MustCompile(`-(\d+)-`) // Regex to find -digit- pattern (hyphen-digit-hyphen after step 1)
+    replacedDecimal := re.ReplaceAllStringFunc(replacedHyphens, func(match string) string {
+        // match will be like "-2-"
+        numberStr := match[1 : len(match)-1] // Extract the digit part "2"
+        return "-" + numberStr + ".0-"       // Replace with "-2.0-" 
+    })
+
+    // 3. Dots between digits: No explicit replacement needed because requirement is to *keep* dots.
+    //    If there were dots between digits in the original `youModelID` (e.g., "gemini_2.5_pro"), 
+    //    and if you wanted to *preserve* them, string.ReplaceAll with "." would do nothing, which is desired.
+    
+
+// 显式映射 You.com 模型 ID 到 OpenAI 模型名称
     explicitMap := map[string]string{
         "openai_o3_mini_high":      "o3-mini-high",
         "openai_o3_mini_medium":    "o3-mini-medium",
@@ -842,8 +850,10 @@ func reverseMapYouModelNameToOpenAI(youModelID string) string {
         return openaiModelName
     }
 
-    return sanitizedModelID // 默认返回 OpenAI 风格
+    return replacedDecimal
 }
+
+    
 
 // getReverseModelMap 创建并返回 You.com 模型名称 -> OpenAI 模型名称 的反向映射。
 func getReverseModelMap() map[string]string {
