@@ -828,11 +828,11 @@ func reverseMapYouModelNameToOpenAI(youModelID string) string {
         "qwen2p5_72b":               "qwen-2.5-72b",
         "qwen2p5_coder_32b":         "qwen-2.5-coder-32b",
         "command_r_plus":             "command-r-plus",
-        "claude_3_7_sonnet":          "claude-3-7-sonnet", // 
-        "claude_3_7_sonnet_thinking": "claude-3-7-sonnet-think",
-        "grok_2":                  "grok-2",          // 
-        "gemini_2_flash":          "gemini-2。0-flash",      // 
-        "deepseek_r1":                "deepseek-reasoner",
+        "claude_3_7_sonnet":          "claude-3.7-sonnet",
+        "claude_3_7_sonnet_thinking": "claude-3.7-sonnet-thinking",
+        "grok_2":                      "grok-2",          
+        "gemini_2_flash":              "gemini-2.0-flash",     
+        "deepseek_r1":                "deepseek-r1",
         "deepseek_v3":                "deepseek-chat",
         "mixtral_8x22b":              "mixtral-8x22b",
         "mistral_medium_2402":        "mistral-medium-2402",
