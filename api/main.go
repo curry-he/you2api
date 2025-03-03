@@ -178,9 +178,9 @@ func init() {
         // Fallback to static models if dynamic fetch fails. Create ModelDetail list from static modelMap
         staticModels := make([]ModelDetail, 0, len(modelMap))
         created := time.Now().Unix()
-        for modelID := range modelMap {
+        for openAIModelName := range modelMap { // 遍历 OpenAI 模型名称
             staticModels = append(staticModels, ModelDetail{
-                ID:      modelID,
+                ID:      openAIModelName, // 使用 OpenAI 模型名称作为 ID
                 Object:  "model",
                 Created: created,
                 OwnedBy: "you.com", // 默认 OwnedBy
@@ -193,7 +193,7 @@ func init() {
 // Handler 是处理所有传入 HTTP 请求的主处理函数。
 func Handler(w http.ResponseWriter, r *http.Request) {
     // 处理 /v1/models 请求（列出可用模型）
-    if r.URL.Path == "/v1/models" || r.URL.Path == "/api/v1/models" { // 修正: 使用 == 进行字符串比较
+    if r.URL.Path == "/v1/models" || r.URL.Path == "/api/v1/models" {
         handleModelsRequest(w, r)
         return
     }
@@ -217,9 +217,21 @@ func handleModelsRequest(w http.ResponseWriter, r *http.Request) {
         w.WriteHeader(http.StatusOK)
         return
     }
+
+    // 创建 OpenAI 格式的模型列表响应
+    openaiModels := make([]ModelDetail, 0, len(dynamicModels))
+    for _, model := range dynamicModels {
+        openaiModels = append(openaiModels, ModelDetail{
+            ID:      reverseMapModelName(model.ID), // 转换为 OpenAI 模型名称
+            Object:  model.Object,
+            Created: model.Created,
+            OwnedBy: model.OwnedBy,
+        })
+    }
+
     response := ModelResponse{
         Object: "list",
-        Data:   dynamicModels, // 使用 dynamicModels (无论是动态获取的还是静态 fallback)
+        Data:   openaiModels, // 使用 OpenAI 格式的模型列表
     }
     json.NewEncoder(w).Encode(response)
 }
@@ -242,7 +254,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    // 验证 Authorization 头部
+    // 验证 Authorization 头部 
     authHeader := r.Header.Get("Authorization")
     if !strings.HasPrefix(authHeader, "Bearer ") {
         http.Error(w, "Missing or invalid authorization header", http.StatusUnauthorized)
@@ -257,6 +269,10 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
         return
     }
     originalModel = openAIReq.Model
+
+    // 映射 OpenAI 模型名称到 You.com 模型名称
+    youModelName := mapModelName(openAIReq.Model)
+    openAIReq.Model = youModelName // 使用 You.com 模型名称替换 OpenAI 模型名称
 
     // 转换 system 消息为 user 消息 
     openAIReq.Messages = convertSystemToUser(openAIReq.Messages)
@@ -366,7 +382,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
     q.Add("conversationTurnId", conversationTurnId)
     q.Add("pastChatLength", fmt.Sprintf("%d", len(chatHistory)))
     q.Add("selectedChatMode", "custom")
-    q.Add("selectedAiModel", mapModelName(openAIReq.Model))
+    q.Add("selectedAiModel", openAIReq.Model) // 使用 You.com 模型名称 (已替换)
     q.Add("enable_agent_clarification_questions", "true")
     q.Add("traceId", traceId)
     q.Add("use_nested_youchat_updates", "true")
@@ -482,10 +498,10 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
     // 根据 OpenAI 请求的 stream 参数选择处理函数
     if !openAIReq.Stream {
-        handleNonStreamingResponse(w, youReq, originalModel) // 修正: 传递 originalModel
+        handleNonStreamingResponse(w, youReq, originalModel)
         return
     }
-    handleStreamingResponse(w, youReq, originalModel) // 修正: 传递 originalModel
+    handleStreamingResponse(w, youReq, originalModel)
 }
 
 // getCookies 根据提供的 DS token 生成所需的 Cookie。
@@ -502,7 +518,7 @@ func getCookies(dsToken string) map[string]string {
 }
 
 // handleNonStreamingResponse 处理非流式请求。
-func handleNonStreamingResponse(w http.ResponseWriter, youReq *http.Request, originalModelName string) { // 修正: 添加 originalModelName 参数
+func handleNonStreamingResponse(w http.ResponseWriter, youReq *http.Request, originalModelName string) {
     client := &http.Client{
         Timeout: 60 * time.Second, // 设置超时时间
     }
@@ -567,7 +583,7 @@ func handleNonStreamingResponse(w http.ResponseWriter, youReq *http.Request, ori
 }
 
 // handleStreamingResponse 处理流式请求。
-func handleStreamingResponse(w http.ResponseWriter, youReq *http.Request, originalModelName string) { // 修正: 添加 originalModelName 参数
+func handleStreamingResponse(w http.ResponseWriter, youReq *http.Request, originalModelName string) {
     client := &http.Client{} // 流式请求不需要设置超时，因为它会持续接收数据
     resp, err := client.Do(youReq)
     if err != nil {
@@ -708,7 +724,7 @@ func convertSystemToUser(messages []Message) []Message {
     var newMessages []Message
     var systemFound bool
 
-    // 收集所有 system 消息 
+    // 收集所有 system 消息
     for _, msg := range messages {
         if msg.Role == "system" {
             if systemContent.Len() > 0 {
@@ -733,7 +749,7 @@ func convertSystemToUser(messages []Message) []Message {
 }
 
 // fetchModelList 从 you.com 动态获取模型列表
-func fetchModelList(dsToken string) (map[string]string, []ModelDetail, error) { // 修正: 添加 dsToken 参数
+func fetchModelList(dsToken string) (map[string]string, []ModelDetail, error) {
     youReq, _ := http.NewRequest("GET", "https://you.com", nil) // Or the correct page URL
     if dsToken != "" {
         cookies := getCookies(dsToken)
@@ -744,46 +760,45 @@ func fetchModelList(dsToken string) (map[string]string, []ModelDetail, error) { 
         youReq.Header.Add("Cookie", strings.Join(cookieStrings, ";"))
     }
     youReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 Edg/133.0.0.0") // Mimic browser
-
     client := &http.Client{}
     resp, err := client.Do(youReq)
     if err != nil {
         return nil, nil, fmt.Errorf("failed to fetch you.com page: %w", err)
     }
     defer resp.Body.Close()
-
     if resp.StatusCode != http.StatusOK {
         body, _ := io.ReadAll(resp.Body)
         return nil, nil, fmt.Errorf("failed to fetch you.com page, status: %d, body: %s", resp.StatusCode, string(body))
     }
-
     doc, err := goquery.NewDocumentFromReader(resp.Body)
     if err != nil {
         return nil, nil, fmt.Errorf("failed to parse HTML: %w", err)
     }
-
     script := doc.Find("script#__NEXT_DATA__").Text()
-
     var nextData NextData
     if err := json.Unmarshal([]byte(script), &nextData); err != nil {
         return nil, nil, fmt.Errorf("failed to parse JSON: %w", err)
     }
-
-    modelMap := make(map[string]string)
+    youModelMap := make(map[string]string) //  You.com 模型名称 -> You.com 模型名称 (自身映射)
+    openaiModelMap := make(map[string]string) // OpenAI 模型名称 -> You.com 模型名称
     models := make([]ModelDetail, 0)
     created := time.Now().Unix()
-
-    for _, model := range nextData.Props.PageProps.AiModels { // 修改为 AiModels
-        modelMap[model.ID] = model.ID // 这里模型名称映射可以根据实际需求调整，如果不需要映射，直接使用 model.ID
+    for _, model := range nextData.Props.PageProps.AiModels {
+        youModelID := model.ID
+        openaiModelID := reverseMapYouModelNameToOpenAI(youModelID) // 转换为 OpenAI 风格
+        youModelMap[youModelID] = youModelID                        // You.com 模型名称自身映射
+        openaiModelMap[openaiModelID] = youModelID                 // OpenAI 模型名称到 You.com 模型名称的映射
         models = append(models, ModelDetail{
-            ID:      model.ID,
+            ID:      youModelID, // 仍然使用 You.com 模型 ID 作为 ModelDetail 的 ID (内部使用)
             Object:  "model",
             Created: created,
-            OwnedBy: model.Company, // 使用动态获取的 Company
+            OwnedBy: model.Company,
         })
     }
-
-    return modelMap, models, nil
+    // 使用新构建的映射
+    modelMap = openaiModelMap       // 更新 modelMap 为 OpenAI 模型名称到 You.com 模型名称的映射
+    dynamicModelMap = openaiModelMap // 动态模型映射也更新
+    return youModelMap, models, nil // 返回 You.com 模型名称的映射和 ModelDetail 列表
 }
 
 // reverseMapYouModelNameToOpenAI 将 You.com 模型 ID 转换为 OpenAI 风格的模型名称
@@ -792,32 +807,56 @@ func reverseMapYouModelNameToOpenAI(youModelID string) string {
     // 使用正则表达式将 '-' 和 '.' 替换为 '_'
     var modelIDRegex = regexp.MustCompile(`[-.]`)
     sanitizedModelID := modelIDRegex.ReplaceAllString(youModelID, "_")
-
     // 合并多个 '_' 为一个
     sanitizedModelID = regexp.MustCompile("_+").ReplaceAllString(sanitizedModelID, "_")
-
     // 去除首尾的下划线
     sanitizedModelID = strings.Trim(sanitizedModelID, "_")
 
-    // 检查是否需要进一步处理版本号格式或其他特定情况
-    // 例如，将 '3_5' 转换为 '3.5'
-    // 分析 specific handling 根据实际需求进行
+    // 显式映射 You.com 模型 ID 到 OpenAI 模型名称
+    explicitMap := map[string]string{
+        "openai_o3_mini_high":      "o3-mini-high",
+        "openai_o3_mini_medium":    "o3-mini-medium",
+        "openai_o1":                "o1",
+        "openai_o1_mini":           "o1-mini",
+        "openai_o1_preview":        "o1-preview",
+        "gpt_4o":                   "gpt-4o",
+        "gpt_4o_mini":              "gpt-4o-mini",
+        "gpt_4_turbo":              "gpt-4-turbo",
+        "gpt_3_5":                  "gpt-3.5-turbo",
+        "claude_3_opus":            "claude-3-opus",
+        "claude_3_sonnet":          "claude-3-sonnet",
+        "claude_3_5_sonnet":        "claude-3.5-sonnet",
+        "claude_3_5_haiku":         "claude-3.5-haiku",
+        "gemini_1_5_pro":           "gemini-1.5-pro",
+        "gemini_1_5_flash":         "gemini-1.5-flash",
+        "llama3_2_90b":             "llama-3.2-90b",
+        "llama3_1_405b":            "llama-3.1-405b",
+        "mistral_large_2":          "mistral-large-2",
+        "qwen2p5_72b":               "qwen-2.5-72b",
+        "qwen2p5_coder_32b":         "qwen-2.5-coder-32b",
+        "command_r_plus":             "command-r-plus",
+        "claude_3_7_sonnet":          "claude-3-7-sonnet",
+        "claude_3_7_sonnet_thinking": "claude-3-7-sonnet-think",
+        "deepseek_r1":                "deepseek-reasoner",
+        "deepseek_v3":                "deepseek-chat",
+        "grok_1":                     "grok-1",
+        "grok_0":                     "grok-0",
+        "mixtral_8x22b":              "mixtral-8x22b",
+        "mistral_medium_2402":        "mistral-medium-2402",
+        "mistral_small_2402":         "mistral-small-2402",
+        "nous_hermes_2_mixtral_8x22b":"nous-hermes-2-mixtral-8x22b",
+        "nous_hermes_2_mixtral":      "nous-hermes-2-mixtral",
+        "nous_hermes_2":              "nous-hermes-2",
+        "nous_hermes":                "nous-hermes",
 
-    // 尝试直接匹配 sanitizedModelID
-    if mappedModel, exists := modelMap[sanitizedModelID]; exists {
-        return mappedModel
     }
 
-    // 如果没有直接匹配，尝试关键词匹配
-    // 例如，检查 modelMap 的值是否包含 sanitizedModelID
-    for modelName, youModel := range modelMap {
-        if strings.Contains(youModel, sanitizedModelID) {
-            return modelName
-        }
+    if openaiModelName, exists := explicitMap[sanitizedModelID]; exists {
+        return openaiModelName
     }
 
-    // 最后，返回默认模型
-    return "deepseek-chat"
+    // 默认返回 OpenAI 风格的名称 (即使没有显式映射)
+    return sanitizedModelID
 }
 
 // getReverseModelMap 创建并返回 modelMap 的反向映射（You.com 模型名称 -> OpenAI 模型名称）。
@@ -847,7 +886,7 @@ func mapModelName(openAIModel string) string {
 func reverseMapModelName(youModel string) string {
     reverseMap := getReverseModelMap() // 始终使用静态的反向映射，因为动态映射主要用于正向映射
     if mappedModel, exists := reverseMap[youModel]; exists {
-        return mappedModel
+        return youModel // 这里返回 You.com 模型名称，因为要返回 You.com 支持的格式
     }
     return "deepseek-chat" // 默认模型
 }
