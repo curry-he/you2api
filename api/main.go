@@ -244,7 +244,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				ID:      modelID,
 				Object:  "model",
 				Created: created,
-				OwnedBy: "organization-owner",
+				OwnedBy: "you.com",
 			})
 		}
 
