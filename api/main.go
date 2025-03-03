@@ -12,6 +12,7 @@ import (
     "path/filepath"
     "strings"
     "time"
+    "regexp"
 
     "github.com/PuerkitoBio/goquery"
     "github.com/google/uuid"
@@ -99,31 +100,129 @@ type ModelDetail struct {
 
 // modelMap 存储 OpenAI 模型名称到 You.com 模型名称的映射。
 var modelMap = map[string]string{
-"deepseek-reasoner":       "deepseek_r1",
-	"deepseek-chat":           "deepseek_v3",
-	"o3-mini-high":            "openai_o3_mini_high",
-	"o3-mini-medium":          "openai_o3_mini_medium",
-	"o1":                      "openai_o1",
-	"o1-mini":                 "openai_o1_mini",
-	"o1-preview":              "openai_o1_preview",
-	"gpt-4o":                  "gpt_4o",
-	"gpt-4o-mini":             "gpt_4o_mini",
-	"gpt-4-turbo":             "gpt_4_turbo",
-	"gpt-3.5-turbo":           "gpt_3.5",
-	"claude-3-opus":           "claude_3_opus",
-	"claude-3-sonnet":         "claude_3_sonnet",
-	"claude-3.5-sonnet":       "claude_3_5_sonnet",
-	"claude-3.5-haiku":        "claude_3_5_haiku",
-	"gemini-1.5-pro":          "gemini_1_5_pro",
-	"gemini-1.5-flash":        "gemini_1_5_flash",
-	"llama-3.2-90b":           "llama3_2_90b",
-	"llama-3.1-405b":          "llama3_1_405b",
-	"mistral-large-2":         "mistral_large_2",
-	"qwen-2.5-72b":            "qwen2p5_72b",
-	"qwen-2.5-coder-32b":      "qwen2p5_coder_32b",
-	"command-r-plus":          "command_r_plus",
-	"claude-3-7-sonnet":       "claude_3_7_sonnet",
-	"claude-3-7-sonnet-think": "claude_3_7_sonnet_thinking",
+    "deepseek-reasoner":       "deepseek_r1",
+    "deepseek-chat":           "deepseek_v3",
+    "o3-mini-high":            "openai_o3_mini_high",
+    "o3-mini-medium":          "openai_o3_mini_medium",
+    "o1":                      "openai_o1",
+    "o1-mini":                 "openai_o1_mini",
+    "o1-preview":              "openai_o1_preview",
+    "gpt-4o":                  "gpt_4o",
+    "gpt-4o-mini":             "gpt_4o_mini",
+    "gpt-4-turbo":             "gpt_4_turbo",
+    "gpt-3.5-turbo":           "gpt_3.5",
+    "claude-3-opus":           "claude_3_opus",
+    "claude-3-sonnet":         "claude_3_sonnet",
+    "claude-3.5-sonnet":       "claude_3_5_sonnet",
+    "claude-3.5-haiku":        "claude_3_5_haiku",
+    "gemini-1.5-pro":          "gemini_1_5_pro",
+    "gemini-1.5-flash":        "gemini_1_5_flash",
+    "llama-3.2-90b":           "llama3_2_90b",
+    "llama-3.1-405b":          "llama3_1_405b",
+    "mistral-large-2":         "mistral_large_2",
+    "qwen-2.5-72b":            "qwen2p5_72b",
+    "qwen-2.5-coder-32b":      "qwen2p5_coder_32b",
+    "command-r-plus":          "command_r_plus",
+    "claude-3-7-sonnet":       "claude_3_7_sonnet",
+    "claude-3-7-sonnet-think": "claude_3_7_sonnet_thinking",
+}
+
+// Dynamic model list and map
+var dynamicModelMap = make(map[string]string)
+var dynamicModels []ModelDetail
+var useDynamicModels = false
+
+// 定义 JSON 结构来解析 __NEXT_DATA__
+type NextData struct {
+    Props struct {
+        PageProps struct {
+            ChatModeModels []struct {
+                ID             string `json:"id"`
+                Name           string `json:"name"`
+                Company        string `json:"company"`
+                IsProOnly      bool   `json:"isProOnly"`
+                ContextLimit   int    `json:"contextLimit"`
+                IsUncensoredModel bool `json:"isUncensoredModel"`
+                IsAllowedForUserChatModes bool `json:"isAllowedForUserChatModes"`
+                ImageURL       string `json:"imageUrl"`
+                Tagline        string `json:"tagline"`
+            } `json:"chatModeModels"`
+        } `json:"pageProps"`
+    } `json:"props"`
+}
+
+// fetchModelList 从 you.com 动态获取模型列表
+func fetchModelList() (map[string]string, []ModelDetail, error) {
+    resp, err := http.Get("https://you.com/")
+    if err != nil {
+        return nil, nil, fmt.Errorf("failed to fetch you.com: %w", err)
+    }
+    defer resp.Body.Close()
+
+    doc, err := goquery.NewDocumentFromReader(resp.Body)
+    if err != nil {
+        return nil, nil, fmt.Errorf("failed to parse HTML: %w", err)
+    }
+
+    script := doc.Find("script#__NEXT_DATA__").Text()
+    var nextData NextData
+    if err := json.Unmarshal([]byte(script), &nextData); err != nil {
+        return nil, nil, fmt.Errorf("failed to parse JSON: %w", err)
+    }
+
+    modelMap := make(map[string]string)
+    models := make([]ModelDetail, 0)
+    created := time.Now().Unix()
+
+    for _, model := range nextData.Props.PageProps.ChatModeModels {
+        // 映射 OpenAI 模型名称 (假设 OpenAI 风格的名称可以通过某种方式从 You.com 的 name 或 id 推断出来)
+        openAIModelName := reverseMapYouModelNameToOpenAI(model.ID) // 尝试反向映射，如果找不到则使用默认逻辑
+        if openAIModelName == "" {
+            openAIModelName = model.ID // 如果反向映射失败，直接使用 You.com 的 ID 作为 OpenAI 模型名 (需要进一步完善映射逻辑)
+        }
+        modelMap[openAIModelName] = model.ID
+        models = append(models, ModelDetail{
+            ID:      openAIModelName,
+            Object:  "model",
+            Created: created,
+            OwnedBy: model.Company, // 使用动态获取的 Company
+        })
+    }
+    return modelMap, models, nil
+}
+
+// reverseMapYouModelNameToOpenAI 将 You.com 模型 ID 转换为 OpenAI 风格的模型名称
+// 规则：将模型 ID 中的 '-' 和 '.' 替换为 '_', 并进行其他必要的格式统一
+func reverseMapYouModelNameToOpenAI(youModelID string) string {
+    // 使用正则表达式将 '-' 和 '.' 替换为 '_'
+    var modelIDRegex = regexp.MustCompile(`[-.]`)
+    sanitizedModelID := modelIDRegex.ReplaceAllString(youModelID, "_")
+
+    // 合并多个 '_' 为一个
+    sanitizedModelID = regexp.MustCompile("_+").ReplaceAllString(sanitizedModelID, "_")
+
+    // 去除首尾的下划线
+    sanitizedModelID = strings.Trim(sanitizedModelID, "_")
+
+    // 检查是否需要进一步处理版本号格式或其他特定情况
+    // 例如，将 '3_5' 转换为 '3.5'
+    // 分析 specific handling 根据实际需求进行
+
+    // 尝试直接匹配 sanitizedModelID
+    if mappedModel, exists := modelMap[sanitizedModelID]; exists {
+        return mappedModel
+    }
+
+    // 如果没有直接匹配，尝试关键词匹配
+    // 例如，检查 modelMap 的值是否包含 sanitizedModelID
+    for modelName, youModel := range modelMap {
+        if strings.Contains(youModel, sanitizedModelID) {
+            return modelName
+        }
+    }
+
+    // 最后，返回默认模型
+    return "deepseek-chat"
 }
 
 // getReverseModelMap 创建并返回 modelMap 的反向映射（You.com 模型名称 -> OpenAI 模型名称）。
@@ -137,15 +236,21 @@ func getReverseModelMap() map[string]string {
 
 // mapModelName 将 OpenAI 模型名称映射到 You.com 模型名称。
 func mapModelName(openAIModel string) string {
-    if mappedModel, exists := modelMap[openAIModel]; exists {
-        return mappedModel
+    if useDynamicModels {
+        if mappedModel, exists := dynamicModelMap[openAIModel]; exists {
+            return mappedModel
+        }
+    } else {
+        if mappedModel, exists := modelMap[openAIModel]; exists {
+            return mappedModel
+        }
     }
     return "deepseek_v3" // 默认模型
 }
 
 // reverseMapModelName 将 You.com 模型名称映射回 OpenAI 模型名称。
 func reverseMapModelName(youModel string) string {
-    reverseMap := getReverseModelMap()
+    reverseMap := getReverseModelMap() // 始终使用静态的反向映射，因为动态映射主要用于正向映射
     if mappedModel, exists := reverseMap[youModel]; exists {
         return mappedModel
     }
@@ -169,108 +274,49 @@ type UploadResponse struct {
 // 定义最大查询长度
 const MaxQueryLength = 2000
 
-// YouModelsHandler fetches the model list from you.com by parsing the DOM.
-// YouModelsHandler fetches the model list from you.com by parsing the DOM.
-func YouModelsHandler(w http.ResponseWriter, r *http.Request) {
-    w.Header().Set("Content-Type", "application/json")
-    w.Header().Set("Access-Control-Allow-Origin", "*")
-    w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-    w.Header().Set("Access-Control-Allow-Headers", "*")
-    if r.Method == "OPTIONS" {
-        w.WriteHeader(http.StatusOK)
-        return
-    }
-    authHeader := r.Header.Get("Authorization")
-    if !strings.HasPrefix(authHeader, "Bearer ") {
-        http.Error(w, "Missing or invalid authorization header", http.StatusUnauthorized)
-        return
-    }
-    dsToken := strings.TrimPrefix(authHeader, "Bearer ")
-
-    // Fetch you.com page
-    youReq, _ := http.NewRequest("GET", "https://you.com", nil) // Or the correct page URL
-    cookies := getCookies(dsToken)
-    var cookieStrings []string
-    for name, value := range cookies {
-        cookieStrings = append(cookieStrings, fmt.Sprintf("%s=%s", name, value))
-    }
-    youReq.Header.Add("Cookie", strings.Join(cookieStrings, ";"))
-    youReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 Edg/133.0.0.0") // Mimic browser
-
-    // === 添加调试日志 ===
-    fmt.Println("\n=== YouModelsHandler 调试日志 ===")
-    fmt.Println("请求 URL:", youReq.URL.String())
-    fmt.Println("请求头 (包括 Cookies):")
-    for key, values := range youReq.Header {
-        fmt.Printf("%s: %v\n", key, values)
-    }
-    fmt.Println("=========================\n")
-    // === 调试日志结束 ===
-
-    client := &http.Client{}
-    resp, err := client.Do(youReq)
-    if err != nil {
-        http.Error(w, fmt.Sprintf("Failed to fetch you.com page: %v", err), 500)
-        return
-    }
-    defer resp.Body.Close()
-
-    // === 添加调试日志 ===
-    fmt.Println("\n=== YouModelsHandler 调试日志 ===")
-    fmt.Println("You.com 响应状态码:", resp.StatusCode)
-    fmt.Println("=========================\n")
-    // === 调试日志结束 ===
-
-    if resp.StatusCode != http.StatusOK {
-        body, _ := io.ReadAll(resp.Body)
-        http.Error(w, fmt.Sprintf("Failed to fetch you.com page, status: %d, body: %s", resp.StatusCode, string(body)), 500)
-        return
-    }
-
-    doc, err := goquery.NewDocumentFromReader(resp.Body)
-    if err != nil {
-        // === 添加调试日志 ===
-        fmt.Println("\n=== YouModelsHandler 调试日志 ===")
-        fmt.Println("goquery 解析 HTML 失败:", err)
-        fmt.Println("=========================\n")
-        // === 调试日志结束 ===
-        http.Error(w, fmt.Sprintf("Failed to parse HTML: %v", err), 500)
-        return
-    }
-
-    var models []ModelDetail
-    doc.Find("[data-testid='overview-menu'] div[data-testid^='overview-menu-option-']").Each(func(_ int, s *goquery.Selection) {
-        dataTestId, exists := s.Attr("data-testid")
-        if exists {
-            modelName := strings.Replace(dataTestId, "overview-menu-option-", "", 1)
-            created := time.Now().Unix() // Or try to extract creation time if available
-            models = append(models, ModelDetail{
-                ID:      modelName,
+func init() {
+    // 尝试动态获取模型列表
+    dynamicMap, dynamicList, err := fetchModelList()
+    if err == nil && len(dynamicMap) > 0 && len(dynamicList) > 0 {
+        dynamicModelMap = dynamicMap
+        dynamicModels = dynamicList
+        useDynamicModels = true
+        fmt.Println("Successfully fetched dynamic model list from you.com")
+    } else {
+        fmt.Println("Failed to fetch dynamic model list, using default model map.", err)
+        // Fallback to static models if dynamic fetch fails. Create ModelDetail list from static modelMap
+        staticModels := make([]ModelDetail, 0, len(modelMap))
+        created := time.Now().Unix()
+        for modelID := range modelMap {
+            staticModels = append(staticModels, ModelDetail{
+                ID:      modelID,
                 Object:  "model",
                 Created: created,
-                OwnedBy: "you.com", // Or "organization-owner" if applicable
+                OwnedBy: "you.com", // 默认 OwnedBy
             })
         }
-    })
-
-    // === 添加调试日志 ===
-    fmt.Println("\n=== YouModelsHandler 调试日志 ===")
-    fmt.Printf("找到模型数量: %d\n", len(models))
-    fmt.Println("=========================\n")
-    // === 调试日志结束 ===
-
-    response := ModelResponse{
-        Object: "list",
-        Data:   models,
+        dynamicModels = staticModels // 使用 staticModels 填充 dynamicModels 以便后续统一处理
     }
-    json.NewEncoder(w).Encode(response)
 }
 
 // Handler 是处理所有传入 HTTP 请求的主处理函数。
 func Handler(w http.ResponseWriter, r *http.Request) {
     // 处理 /v1/models 请求（列出可用模型）
     if r.URL.Path == "/v1/models" || r.URL.Path == "/api/v1/models" {
-        YouModelsHandler(w, r) // 使用新的处理函数获取模型列表
+        w.Header().Set("Content-Type", "application/json")
+        w.Header().Set("Access-Control-Allow-Origin", "*")
+        w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+        w.Header().Set("Access-Control-Allow-Headers", "*")
+        if r.Method == "OPTIONS" {
+            w.WriteHeader(http.StatusOK)
+            return
+        }
+
+        response := ModelResponse{
+            Object: "list",
+            Data:   dynamicModels, // 使用 dynamicModels (无论是动态获取的还是静态 fallback)
+        }
+        json.NewEncoder(w).Encode(response)
         return
     }
 
@@ -531,10 +577,10 @@ func getCookies(dsToken string) map[string]string {
     return map[string]string{
         "guest_has_seen_legal_disclaimer": "true",
         "youchat_personalization":         "true",
-        "DS":                              dsToken,                // 关键的 DS token
-        "you_subscription":                "youpro_standard_year", // 示例订阅信息
+        "DS":                              dsToken,                    // 关键的 DS token
+        "you_subscription":                "youpro_standard_year",     // 示例订阅信息
         "youpro_subscription":             "true",
-        "ai_model":                        "deepseek_r1", // 示例 AI 模型
+        "ai_model":                        "deepseek_r1",             // 示例 AI 模型
         "youchat_smart_learn":             "true",
     }
 }
@@ -606,20 +652,7 @@ func handleNonStreamingResponse(w http.ResponseWriter, youReq *http.Request) {
 
 // handleStreamingResponse 处理流式请求。
 func handleStreamingResponse(w http.ResponseWriter, youReq *http.Request) {
-    flusher, ok := w.(http.Flusher)
-    if !ok {
-        http.Error(w, "Streaming unsupported!", http.StatusInternalServerError)
-        return
-    }
-
-    w.Header().Set("Content-Type", "text/event-stream")
-    w.Header().Set("Cache-Control", "no-cache")
-    w.Header().Set("Connection", "keep-alive")
-    w.Header().Set("Transfer-Encoding", "chunked")
-
-    client := &http.Client{
-        Timeout: 30 * time.Minute,
-    }
+    client := &http.Client{} // 流式请求不需要设置超时，因为它会持续接收数据
     resp, err := client.Do(youReq)
     if err != nil {
         http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -627,25 +660,23 @@ func handleStreamingResponse(w http.ResponseWriter, youReq *http.Request) {
     }
     defer resp.Body.Close()
 
-    scanner := bufio.NewScanner(resp.Body)
-    buf := make([]byte, 0, 64*1024)
-    scanner.Buffer(buf, 1024*1024)
+    // 设置流式响应的头部
+    w.Header().Set("Content-Type", "text/event-stream")
+    w.Header().Set("Cache-Control", "no-cache")
+    w.Header().Set("Connection", "keep-alive")
 
+    scanner := bufio.NewScanner(resp.Body)
+    // 逐行扫描响应，寻找 youChatToken 事件
     for scanner.Scan() {
         line := scanner.Text()
         if strings.HasPrefix(line, "event: youChatToken") {
-            scanner.Scan()
-            data := scanner.Text()
-            if !strings.HasPrefix(data, "data: ") {
-                continue
-            }
+            scanner.Scan()         // 读取下一行 (data 行)
+            data := scanner.Text() // 获取数据行
+            var token YouChatResponse
+            json.Unmarshal([]byte(strings.TrimPrefix(data, "data: ")), &token) // 解析 JSON
 
-            var tokenResp YouChatResponse
-            if err := json.Unmarshal([]byte(strings.TrimPrefix(data, "data: ")), &tokenResp); err != nil {
-                continue
-            }
-
-            streamResp := OpenAIStreamResponse{
+            // 构建 OpenAI 格式的流式响应块
+            openAIResp := OpenAIStreamResponse{
                 ID:      "chatcmpl-" + fmt.Sprintf("%d", time.Now().Unix()),
                 Object:  "chat.completion.chunk",
                 Created: time.Now().Unix(),
@@ -653,89 +684,44 @@ func handleStreamingResponse(w http.ResponseWriter, youReq *http.Request) {
                 Choices: []Choice{
                     {
                         Delta: Delta{
-                            Content: tokenResp.YouChatToken,
+                            Content: token.YouChatToken, // 增量内容
                         },
-                        Index: 0,
+                        Index:        0,
+                        FinishReason: "", // 流式响应中通常为空
                     },
                 },
             }
-
-            respBytes, err := json.Marshal(streamResp)
-            if err != nil {
-                fmt.Printf("Error marshaling stream response: %v\n", err)
-                continue // 继续下一次循环，不要中断流
-            }
-
-            fmt.Fprintf(w, "data: %s\n\n", respBytes)
-            flusher.Flush() // 确保立即发送
+            respBytes, _ := json.Marshal(openAIResp)          // 将响应块序列化为 JSON
+            fmt.Fprintf(w, "data: %s\n\n", string(respBytes)) // 写入响应数据
+            w.(http.Flusher).Flush()                          // 立即刷新输出
         }
     }
-
-    if scanner.Err() != nil {
-        fmt.Printf("Error scanning response: %v\n", scanner.Err())
-        return // 流处理发生错误时，直接返回，不断开连接
-    }
-
-    // 发送 [DONE] 消息
-    doneResp := OpenAIStreamResponse{
-        ID:      "chatcmpl-" + fmt.Sprintf("%d", time.Now().Unix()),
-        Object:  "chat.completion.chunk",
-        Created: time.Now().Unix(),
-        Model:   reverseMapModelName(mapModelName(originalModel)), // 映射回 OpenAI 模型名称
-        Choices: []Choice{
-            {
-                Delta: Delta{
-                    Content: "",
-                },
-                Index:        0,
-                FinishReason: "stop",
-            },
-        },
-    }
-    doneBytes, _ := json.Marshal(doneResp)
-    fmt.Fprintf(w, "data: %s\n\n", doneBytes)
-    flusher.Flush()
 }
 
-// getNonce retrieves a nonce from the /api/nonce endpoint.
+// 获取上传文件所需的 nonce
 func getNonce(dsToken string) (*NonceResponse, error) {
-    nonceURL := "https://you.com/api/nonce"
-    req, err := http.NewRequest("GET", nonceURL, nil)
-    if err != nil {
-        return nil, err
-    }
-
-    // 设置 Cookie
-    cookies := getCookies(dsToken)
-    var cookieStrings []string
-    for name, value := range cookies {
-        cookieStrings = append(cookieStrings, fmt.Sprintf("%s=%s", name, value))
-    }
-    req.Header.Add("Cookie", strings.Join(cookieStrings, ";"))
-
-    client := &http.Client{}
-    resp, err := client.Do(req)
+    req, _ := http.NewRequest("GET", "https://you.com/api/get_nonce", nil)
+    req.Header.Set("Cookie", fmt.Sprintf("DS=%s", dsToken))
+    resp, err := http.DefaultClient.Do(req)
     if err != nil {
         return nil, err
     }
     defer resp.Body.Close()
 
-    if resp.StatusCode != http.StatusOK {
-        return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
+    // 读取完整的响应内容
+    body, err := io.ReadAll(resp.Body)
+    if err != nil {
+        return nil, fmt.Errorf("读取响应失败: %v", err)
     }
 
-    var nonceResp NonceResponse
-    if err := json.NewDecoder(resp.Body).Decode(&nonceResp); err != nil {
-        return nil, err
-    }
-
-    return &nonceResp, nil
+    // 直接使用响应内容作为 UUID
+    return &NonceResponse{
+        Uuid: strings.TrimSpace(string(body)),
+    }, nil
 }
 
-// uploadFile uploads a file to the /api/upload endpoint.
-func uploadFile(dsToken string, filePath string) (*UploadResponse, error) {
-    uploadURL := "https://you.com/api/upload"
-
+// 上传文件
+func uploadFile(dsToken, filePath string) (*UploadResponse, error) {
     file, err := os.Open(filePath)
     if err != nil {
         return nil, err
@@ -744,45 +730,24 @@ func uploadFile(dsToken string, filePath string) (*UploadResponse, error) {
 
     body := &bytes.Buffer{}
     writer := multipart.NewWriter(body)
-
     part, err := writer.CreateFormFile("file", filepath.Base(filePath))
     if err != nil {
         return nil, err
     }
-    _, err = io.Copy(part, file)
-    if err != nil {
+    if _, err := io.Copy(part, file); err != nil {
         return nil, err
     }
+    writer.Close()
 
-    err = writer.Close()
-    if err != nil {
-        return nil, err
-    }
-
-    req, err := http.NewRequest("POST", uploadURL, body)
-    if err != nil {
-        return nil, err
-    }
+    req, _ := http.NewRequest("POST", "https://you.com/api/upload", body)
     req.Header.Set("Content-Type", writer.FormDataContentType())
+    req.Header.Set("Cookie", fmt.Sprintf("DS=%s", dsToken))
 
-    // 设置 Cookie
-    cookies := getCookies(dsToken)
-    var cookieStrings []string
-    for name, value := range cookies {
-        cookieStrings = append(cookieStrings, fmt.Sprintf("%s=%s", name, value))
-    }
-    req.Header.Add("Cookie", strings.Join(cookieStrings, ";"))
-
-    client := &http.Client{}
-    resp, err := client.Do(req)
+    resp, err := http.DefaultClient.Do(req)
     if err != nil {
         return nil, err
     }
     defer resp.Body.Close()
-
-    if resp.StatusCode != http.StatusOK {
-        return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
-    }
 
     var uploadResp UploadResponse
     if err := json.NewDecoder(resp.Body).Decode(&uploadResp); err != nil {
@@ -794,60 +759,57 @@ func uploadFile(dsToken string, filePath string) (*UploadResponse, error) {
 
 // 计算消息的 token 数（使用字符估算方法）
 func countTokens(messages []Message) (int, error) {
-	totalTokens := 0
-	for _, msg := range messages {
-		content := msg.Content
-		englishCount := 0
-		chineseCount := 0
+    totalTokens := 0
+    for _, msg := range messages {
+        content := msg.Content
+        englishCount := 0
+        chineseCount := 0
 
-		// 遍历每个字符
-		for _, r := range content {
-			if r <= 127 { // ASCII 字符（英文和符号）
-				englishCount++
-			} else { // 非 ASCII 字符（中文等）
-				chineseCount++
-			}
-		}
+        // 遍历每个字符
+        for _, r := range content {
+            if r <= 127 { // ASCII 字符（英文和符号）
+                englishCount++
+            } else { // 非 ASCII 字符（中文等）
+                chineseCount++
+            }
+        }
 
-		// 计算 tokens：英文字符 * 0.3 + 中文字符 * 0.6
-		tokens := int(float64(englishCount)*0.3 + float64(chineseCount)*1)
-
-		// 加上角色名的 token（约 2 个）
-		totalTokens += tokens + 2
-	}
-	return totalTokens, nil
+        // 计算 tokens：英文字符 _0.3 + 中文字符_ 0.6
+        tokens := int(float64(englishCount)*0.3 + float64(chineseCount)*1)
+        // 加上角色名的 token（约 2 个）
+        totalTokens += tokens + 2
+    }
+    return totalTokens, nil
 }
 
 // 将 system 消息转换为第一条 user 消息
 func convertSystemToUser(messages []Message) []Message {
-	if len(messages) == 0 {
-		return messages
-	}
+    if len(messages) == 0 {
+        return messages
+    }
+    var systemContent strings.Builder
+    var newMessages []Message
+    var systemFound bool
 
-	var systemContent strings.Builder
-	var newMessages []Message
-	var systemFound bool
+    // 收集所有 system 消息
+    for _, msg := range messages {
+        if msg.Role == "system" {
+            if systemContent.Len() > 0 {
+                systemContent.WriteString("\n")
+            }
+            systemContent.WriteString(msg.Content)
+            systemFound = true
+        } else {
+            newMessages = append(newMessages, msg)
+        }
+    }
 
-	// 收集所有 system 消息
-	for _, msg := range messages {
-		if msg.Role == "system" {
-			if systemContent.Len() > 0 {
-				systemContent.WriteString("\n")
-			}
-			systemContent.WriteString(msg.Content)
-			systemFound = true
-		} else {
-			newMessages = append(newMessages, msg)
-		}
-	}
-
-	// 如果有 system 消息，将其作为第一条 user 消息
-	if systemFound {
-		newMessages = append([]Message{{
-			Role:    "user",
-			Content: systemContent.String(),
-		}}, newMessages...)
-	}
-
-	return newMessages
+    // 如果有 system 消息，将其作为第一条 user 消息
+    if systemFound {
+        newMessages = append([]Message{{
+            Role:    "user",
+            Content: systemContent.String(),
+        }}, newMessages...)
+    }
+    return newMessages
 }
