@@ -1,4 +1,4 @@
-package handler
+package main
 
 import (
     "bufio"
@@ -10,9 +10,9 @@ import (
     "net/http"
     "os"
     "path/filepath"
+    "regexp"
     "strings"
     "time"
-    "regexp"
 
     "github.com/PuerkitoBio/goquery"
     "github.com/google/uuid"
@@ -137,151 +137,19 @@ type NextData struct {
     Props struct {
         PageProps struct {
             AiModels []struct { // 将 ChatModeModels 修改为 AiModels，并匹配 JSON 结构中的 aiModels
-                ID             string `json:"id"`
-                Name           string `json:"name"`
-                Company        string `json:"company"`
-                IsProOnly      bool   `json:"isProOnly"`
-                ContextLimit   int    `json:"contextLimit"`
-                IsUncensoredModel bool `json:"isUncensoredModel"`
-                IsAllowedForUserChatModes bool `json:"isAllowedForUserChatModes"`
-                ImageURL       string `json:"imageUrl"`
-                Tagline        string `json:"tagline"`
+                ID                      string `json:"id"`
+                Name                    string `json:"name"`
+                Company                 string `json:"company"`
+                IsProOnly               bool   `json:"isProOnly"`
+                ContextLimit            int    `json:"contextLimit"`
+                IsUncensoredModel       bool   `json:"isUncensoredModel"`
+                IsAllowedForUserChatModes bool   `json:"isAllowedForUserChatModes"`
+                ImageURL                string `json:"imageUrl"`
+                Tagline                 string `json:"tagline"`
             } `json:"aiModels"` // 确保 JSON tag 与 JSON 结构一致
         } `json:"pageProps"`
     } `json:"props"`
 }
-
-// ModelDetail 定义模型详情结构体，如果需要返回更详细的模型信息
-type ModelDetail struct {
-    ID      string `json:"id"`
-    Object  string `json:"object"`
-    Created int64  `json:"created"`
-    OwnedBy string `json:"owned_by"`
-}
-
-// getCookies 模拟获取 cookies，这里仅为示例，实际情况可能需要更复杂的逻辑
-func getCookies(dsToken string) map[string]string {
-    // 这里根据你的实际情况填充 cookie 获取逻辑
-    // 例如，如果 dsToken 是一个有效的 token，你可能需要用它来请求一个接口获取 cookies
-    // 这里为了演示，简单返回一个空的 map
-    return map[string]string{}
-}
-
-// fetchModelList 从 you.com 动态获取模型列表
-func fetchModelList(dsToken string) (map[string]string, []ModelDetail, error) {
-    youReq, _ := http.NewRequest("GET", "https://you.com", nil) // Or the correct page URL
-    if dsToken != "" {
-        cookies := getCookies(dsToken)
-        var cookieStrings []string
-        for name, value := range cookies {
-            cookieStrings = append(cookieStrings, fmt.Sprintf("%s=%s", name, value))
-        }
-        youReq.Header.Add("Cookie", strings.Join(cookieStrings, ";"))
-    }
-    youReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 Edg/133.0.0.0") // Mimic browser
-    client := &http.Client{}
-    resp, err := client.Do(youReq)
-    if err != nil {
-        return nil, nil, fmt.Errorf("failed to fetch you.com page: %w", err)
-    }
-    defer resp.Body.Close()
-    if resp.StatusCode != http.StatusOK {
-        body, _ := io.ReadAll(resp.Body)
-        return nil, nil, fmt.Errorf("failed to fetch you.com page, status: %d, body: %s", resp.StatusCode, string(body))
-    }
-    doc, err := goquery.NewDocumentFromReader(resp.Body)
-    if err != nil {
-        return nil, nil, fmt.Errorf("failed to parse HTML: %w", err)
-    }
-    script := doc.Find("script#__NEXT_DATA__").Text()
-    var nextData NextData
-    if err := json.Unmarshal([]byte(script), &nextData); err != nil {
-        return nil, nil, fmt.Errorf("failed to parse JSON: %w", err)
-    }
-    modelMap := make(map[string]string)
-    models := make([]ModelDetail, 0)
-    created := time.Now().Unix()
-    for _, model := range nextData.Props.PageProps.AiModels { // 修改为 AiModels
-        modelMap[model.ID] = model.ID // 这里模型名称映射可以根据实际需求调整，如果不需要映射，直接使用 model.ID
-        models = append(models, ModelDetail{
-            ID:      model.ID,
-            Object:  "model",
-            Created: created,
-            OwnedBy: model.Company, // 使用动态获取的 Company
-        })
-    }
-    return modelMap, models, nil
-}
-
-
-// reverseMapYouModelNameToOpenAI 将 You.com 模型 ID 转换为 OpenAI 风格的模型名称
-// 规则：将模型 ID 中的 '-' 和 '.' 替换为 '_', 并进行其他必要的格式统一
-func reverseMapYouModelNameToOpenAI(youModelID string) string {
-    // 使用正则表达式将 '-' 和 '.' 替换为 '_'
-    var modelIDRegex = regexp.MustCompile(`[-.]`)
-    sanitizedModelID := modelIDRegex.ReplaceAllString(youModelID, "_")
-
-    // 合并多个 '_' 为一个
-    sanitizedModelID = regexp.MustCompile("_+").ReplaceAllString(sanitizedModelID, "_")
-
-    // 去除首尾的下划线
-    sanitizedModelID = strings.Trim(sanitizedModelID, "_")
-
-    // 检查是否需要进一步处理版本号格式或其他特定情况
-    // 例如，将 '3_5' 转换为 '3.5'
-    // 分析 specific handling 根据实际需求进行
-
-    // 尝试直接匹配 sanitizedModelID
-    if mappedModel, exists := modelMap[sanitizedModelID]; exists {
-        return mappedModel
-    }
-
-    // 如果没有直接匹配，尝试关键词匹配
-    // 例如，检查 modelMap 的值是否包含 sanitizedModelID
-    for modelName, youModel := range modelMap {
-        if strings.Contains(youModel, sanitizedModelID) {
-            return modelName
-        }
-    }
-
-    // 最后，返回默认模型
-    return "deepseek-chat"
-}
-
-// getReverseModelMap 创建并返回 modelMap 的反向映射（You.com 模型名称 -> OpenAI 模型名称）。
-func getReverseModelMap() map[string]string {
-    reverse := make(map[string]string, len(modelMap))
-    for k, v := range modelMap {
-        reverse[v] = k
-    }
-    return reverse
-}
-
-// mapModelName 将 OpenAI 模型名称映射到 You.com 模型名称。
-func mapModelName(openAIModel string) string {
-    if useDynamicModels {
-        if mappedModel, exists := dynamicModelMap[openAIModel]; exists {
-            return mappedModel
-        }
-    } else {
-        if mappedModel, exists := modelMap[openAIModel]; exists {
-            return mappedModel
-        }
-    }
-    return "deepseek_v3" // 默认模型
-}
-
-// reverseMapModelName 将 You.com 模型名称映射回 OpenAI 模型名称。
-func reverseMapModelName(youModel string) string {
-    reverseMap := getReverseModelMap() // 始终使用静态的反向映射，因为动态映射主要用于正向映射
-    if mappedModel, exists := reverseMap[youModel]; exists {
-        return mappedModel
-    }
-    return "deepseek-chat" // 默认模型
-}
-
-// originalModel 存储原始的 OpenAI 模型名称。
-var originalModel string
 
 // NonceResponse 定义了获取 nonce 的响应结构
 type NonceResponse struct {
@@ -299,7 +167,7 @@ const MaxQueryLength = 2000
 
 func init() {
     // 尝试动态获取模型列表
-    dynamicMap, dynamicList, err := fetchModelList()
+    dynamicMap, dynamicList, err := fetchModelList("") // 修正: fetchModelList 需要 dsToken 参数，但init函数中无法获取，暂时传空字符串，后续考虑如何传递或初始化
     if err == nil && len(dynamicMap) > 0 && len(dynamicList) > 0 {
         dynamicModelMap = dynamicMap
         dynamicModels = dynamicList
@@ -325,34 +193,46 @@ func init() {
 // Handler 是处理所有传入 HTTP 请求的主处理函数。
 func Handler(w http.ResponseWriter, r *http.Request) {
     // 处理 /v1/models 请求（列出可用模型）
-    if r.URL.Path == "/v1/models" || r.URL.Path == "/api/v1/models" {
-        w.Header().Set("Content-Type", "application/json")
-        w.Header().Set("Access-Control-Allow-Origin", "*")
-        w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-        w.Header().Set("Access-Control-Allow-Headers", "*")
-        if r.Method == "OPTIONS" {
-            w.WriteHeader(http.StatusOK)
-            return
-        }
-
-        response := ModelResponse{
-            Object: "list",
-            Data:   dynamicModels, // 使用 dynamicModels (无论是动态获取的还是静态 fallback)
-        }
-        json.NewEncoder(w).Encode(response)
+    if r.URL.Path == "/v1/models" || r.URL.Path == "/api/v1/models" { // 修正: 使用 == 进行字符串比较
+        handleModelsRequest(w, r)
         return
     }
 
     // 处理非 /v1/chat/completions 请求（服务状态检查）
     if r.URL.Path != "/v1/chat/completions" && r.URL.Path != "/none/v1/chat/completions" && r.URL.Path != "/such/chat/completions" {
-        w.Header().Set("Content-Type", "application/json")
-        json.NewEncoder(w).Encode(map[string]string{
-            "status":  "You2Api Service Running...",
-            "message": "MoLoveSze...",
-        })
+        handleStatusCheck(w, r)
         return
     }
 
+    // 处理 chat completions 请求
+    handleChatCompletions(w, r)
+}
+
+func handleModelsRequest(w http.ResponseWriter, r *http.Request) {
+    w.Header().Set("Content-Type", "application/json")
+    w.Header().Set("Access-Control-Allow-Origin", "*")
+    w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+    w.Header().Set("Access-Control-Allow-Headers", "*")
+    if r.Method == "OPTIONS" {
+        w.WriteHeader(http.StatusOK)
+        return
+    }
+    response := ModelResponse{
+        Object: "list",
+        Data:   dynamicModels, // 使用 dynamicModels (无论是动态获取的还是静态 fallback)
+    }
+    json.NewEncoder(w).Encode(response)
+}
+
+func handleStatusCheck(w http.ResponseWriter, r *http.Request) {
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]string{
+        "status":  "You2Api Service Running...",
+        "message": "MoLoveSze...",
+    })
+}
+
+func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
     // 设置 CORS 头部
     w.Header().Set("Access-Control-Allow-Origin", "*")
     w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
@@ -378,7 +258,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
     }
     originalModel = openAIReq.Model
 
-    // 转换 system 消息为 user 消息
+    // 转换 system 消息为 user 消息 
     openAIReq.Messages = convertSystemToUser(openAIReq.Messages)
 
     // 构建 You.com 聊天历史
@@ -402,6 +282,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
                     http.Error(w, "Failed to get nonce", http.StatusInternalServerError)
                     return
                 }
+
                 // 创建临时文件
                 tempFile := fmt.Sprintf("temp_%s.txt", nonceResp.Uuid)
                 if err := os.WriteFile(tempFile, []byte(msg.Content), 0644); err != nil {
@@ -410,6 +291,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
                     return
                 }
                 defer os.Remove(tempFile)
+
                 // 上传文件
                 uploadResp, err := uploadFile(dsToken, tempFile)
                 if err != nil {
@@ -417,6 +299,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
                     http.Error(w, "Failed to upload file", http.StatusInternalServerError)
                     return
                 }
+
                 // 添加文件源信息
                 sources = append(sources, map[string]interface{}{
                     "source_type":   "user_file",
@@ -424,6 +307,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
                     "user_filename": uploadResp.UserFilename,
                     "size_bytes":    len(msg.Content),
                 })
+
                 // 在历史记录中使用文件引用
                 chatHistory = append(chatHistory, map[string]interface{}{
                     "question": fmt.Sprintf("Please review the attached file: %s", uploadResp.UserFilename),
@@ -436,7 +320,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
                 })
             }
         } else if msg.Role == "assistant" {
-            // 只保存最后一条 assistant 消息
+            // 只保存最后一条 assistant 消息 
             lastAssistantMessage = msg.Content
         }
     }
@@ -468,6 +352,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
     // 构建查询参数
     q := youReq.URL.Query()
+
     // 设置基本参数
     q.Add("page", "1")
     q.Add("count", "10")
@@ -495,6 +380,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
             http.Error(w, "Failed to get nonce", http.StatusInternalServerError)
             return
         }
+
         // 创建临时文件
         tempFile := fmt.Sprintf("temp_%s.txt", nonceResp.Uuid)
         if err := os.WriteFile(tempFile, []byte(lastMessage.Content), 0644); err != nil {
@@ -503,6 +389,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
             return
         }
         defer os.Remove(tempFile)
+
         // 上传文件
         uploadResp, err := uploadFile(dsToken, tempFile)
         if err != nil {
@@ -510,6 +397,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
             http.Error(w, "Failed to upload file", http.StatusInternalServerError)
             return
         }
+
         // 添加文件源信息
         sources = append(sources, map[string]interface{}{
             "source_type":   "user_file",
@@ -517,9 +405,11 @@ func Handler(w http.ResponseWriter, r *http.Request) {
             "user_filename": uploadResp.UserFilename,
             "size_bytes":    len(lastMessage.Content),
         })
+
         // 添加 sources 参数
         sourcesJSON, _ := json.Marshal(sources)
         q.Add("sources", string(sourcesJSON))
+
         // 使用文件引用作为查询
         q.Add("q", fmt.Sprintf("Please review the attached file: %s", uploadResp.UserFilename))
     } else {
@@ -539,6 +429,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
     for key, values := range youReq.Header {
         fmt.Printf("%s: %v\n", key, values)
     }
+
     // 设置请求头
     youReq.Header = http.Header{
         "sec-ch-ua-platform":         {"Windows"},
@@ -557,6 +448,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
         "Sec-Fetch-Dest":             {"empty"},
         "Host":                       {"you.com"},
     }
+
     // 设置 Cookie
     cookies := getCookies(dsToken)
     var cookieStrings []string
@@ -579,6 +471,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
     // 打印响应状态码
     fmt.Printf("响应状态码: %d\n", resp.StatusCode)
+
     // 如果状态码不是 200，打印响应内容
     if resp.StatusCode != http.StatusOK {
         body, _ := io.ReadAll(resp.Body)
@@ -589,10 +482,10 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
     // 根据 OpenAI 请求的 stream 参数选择处理函数
     if !openAIReq.Stream {
-        handleNonStreamingResponse(w, youReq) // 处理非流式响应
+        handleNonStreamingResponse(w, youReq, originalModel) // 修正: 传递 originalModel
         return
     }
-    handleStreamingResponse(w, youReq) // 处理流式响应
+    handleStreamingResponse(w, youReq, originalModel) // 修正: 传递 originalModel
 }
 
 // getCookies 根据提供的 DS token 生成所需的 Cookie。
@@ -600,16 +493,16 @@ func getCookies(dsToken string) map[string]string {
     return map[string]string{
         "guest_has_seen_legal_disclaimer": "true",
         "youchat_personalization":         "true",
-        "DS":                              dsToken,                    // 关键的 DS token
-        "you_subscription":                "youpro_standard_year",     // 示例订阅信息
+        "DS":                              dsToken, // 关键的 DS token
+        "you_subscription":                "youpro_standard_year", // 示例订阅信息
         "youpro_subscription":             "true",
-        "ai_model":                        "deepseek_r1",             // 示例 AI 模型
+        "ai_model":                        "deepseek_r1",         // 示例 AI 模型
         "youchat_smart_learn":             "true",
     }
 }
 
 // handleNonStreamingResponse 处理非流式请求。
-func handleNonStreamingResponse(w http.ResponseWriter, youReq *http.Request) {
+func handleNonStreamingResponse(w http.ResponseWriter, youReq *http.Request, originalModelName string) { // 修正: 添加 originalModelName 参数
     client := &http.Client{
         Timeout: 60 * time.Second, // 设置超时时间
     }
@@ -653,7 +546,7 @@ func handleNonStreamingResponse(w http.ResponseWriter, youReq *http.Request) {
         ID:      "chatcmpl-" + fmt.Sprintf("%d", time.Now().Unix()),
         Object:  "chat.completion",
         Created: time.Now().Unix(),
-        Model:   reverseMapModelName(mapModelName(originalModel)), // 映射回 OpenAI 模型名称
+        Model:   reverseMapModelName(mapModelName(originalModelName)), // 修正: 使用 originalModelName
         Choices: []OpenAIChoice{
             {
                 Message: Message{
@@ -674,7 +567,7 @@ func handleNonStreamingResponse(w http.ResponseWriter, youReq *http.Request) {
 }
 
 // handleStreamingResponse 处理流式请求。
-func handleStreamingResponse(w http.ResponseWriter, youReq *http.Request) {
+func handleStreamingResponse(w http.ResponseWriter, youReq *http.Request, originalModelName string) { // 修正: 添加 originalModelName 参数
     client := &http.Client{} // 流式请求不需要设置超时，因为它会持续接收数据
     resp, err := client.Do(youReq)
     if err != nil {
@@ -703,7 +596,7 @@ func handleStreamingResponse(w http.ResponseWriter, youReq *http.Request) {
                 ID:      "chatcmpl-" + fmt.Sprintf("%d", time.Now().Unix()),
                 Object:  "chat.completion.chunk",
                 Created: time.Now().Unix(),
-                Model:   reverseMapModelName(mapModelName(originalModel)), // 映射回 OpenAI 模型名称
+                Model:   reverseMapModelName(mapModelName(originalModelName)), // 修正: 使用 originalModelName
                 Choices: []Choice{
                     {
                         Delta: Delta{
@@ -776,7 +669,6 @@ func uploadFile(dsToken, filePath string) (*UploadResponse, error) {
     if err := json.NewDecoder(resp.Body).Decode(&uploadResp); err != nil {
         return nil, err
     }
-
     return &uploadResp, nil
 }
 
@@ -799,6 +691,7 @@ func countTokens(messages []Message) (int, error) {
 
         // 计算 tokens：英文字符 _0.3 + 中文字符_ 0.6
         tokens := int(float64(englishCount)*0.3 + float64(chineseCount)*1)
+
         // 加上角色名的 token（约 2 个）
         totalTokens += tokens + 2
     }
@@ -810,11 +703,12 @@ func convertSystemToUser(messages []Message) []Message {
     if len(messages) == 0 {
         return messages
     }
+
     var systemContent strings.Builder
     var newMessages []Message
     var systemFound bool
 
-    // 收集所有 system 消息
+    // 收集所有 system 消息 
     for _, msg := range messages {
         if msg.Role == "system" {
             if systemContent.Len() > 0 {
@@ -834,5 +728,129 @@ func convertSystemToUser(messages []Message) []Message {
             Content: systemContent.String(),
         }}, newMessages...)
     }
+
     return newMessages
 }
+
+// fetchModelList 从 you.com 动态获取模型列表
+func fetchModelList(dsToken string) (map[string]string, []ModelDetail, error) { // 修正: 添加 dsToken 参数
+    youReq, _ := http.NewRequest("GET", "https://you.com", nil) // Or the correct page URL
+    if dsToken != "" {
+        cookies := getCookies(dsToken)
+        var cookieStrings []string
+        for name, value := range cookies {
+            cookieStrings = append(cookieStrings, fmt.Sprintf("%s=%s", name, value))
+        }
+        youReq.Header.Add("Cookie", strings.Join(cookieStrings, ";"))
+    }
+    youReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 Edg/133.0.0.0") // Mimic browser
+
+    client := &http.Client{}
+    resp, err := client.Do(youReq)
+    if err != nil {
+        return nil, nil, fmt.Errorf("failed to fetch you.com page: %w", err)
+    }
+    defer resp.Body.Close()
+
+    if resp.StatusCode != http.StatusOK {
+        body, _ := io.ReadAll(resp.Body)
+        return nil, nil, fmt.Errorf("failed to fetch you.com page, status: %d, body: %s", resp.StatusCode, string(body))
+    }
+
+    doc, err := goquery.NewDocumentFromReader(resp.Body)
+    if err != nil {
+        return nil, nil, fmt.Errorf("failed to parse HTML: %w", err)
+    }
+
+    script := doc.Find("script#__NEXT_DATA__").Text()
+
+    var nextData NextData
+    if err := json.Unmarshal([]byte(script), &nextData); err != nil {
+        return nil, nil, fmt.Errorf("failed to parse JSON: %w", err)
+    }
+
+    modelMap := make(map[string]string)
+    models := make([]ModelDetail, 0)
+    created := time.Now().Unix()
+
+    for _, model := range nextData.Props.PageProps.AiModels { // 修改为 AiModels
+        modelMap[model.ID] = model.ID // 这里模型名称映射可以根据实际需求调整，如果不需要映射，直接使用 model.ID
+        models = append(models, ModelDetail{
+            ID:      model.ID,
+            Object:  "model",
+            Created: created,
+            OwnedBy: model.Company, // 使用动态获取的 Company
+        })
+    }
+
+    return modelMap, models, nil
+}
+
+// reverseMapYouModelNameToOpenAI 将 You.com 模型 ID 转换为 OpenAI 风格的模型名称
+// 规则：将模型 ID 中的 '-' 和 '.' 替换为 '_', 并进行其他必要的格式统一
+func reverseMapYouModelNameToOpenAI(youModelID string) string {
+    // 使用正则表达式将 '-' 和 '.' 替换为 '_'
+    var modelIDRegex = regexp.MustCompile(`[-.]`)
+    sanitizedModelID := modelIDRegex.ReplaceAllString(youModelID, "_")
+
+    // 合并多个 '_' 为一个
+    sanitizedModelID = regexp.MustCompile("_+").ReplaceAllString(sanitizedModelID, "_")
+
+    // 去除首尾的下划线
+    sanitizedModelID = strings.Trim(sanitizedModelID, "_")
+
+    // 检查是否需要进一步处理版本号格式或其他特定情况
+    // 例如，将 '3_5' 转换为 '3.5'
+    // 分析 specific handling 根据实际需求进行
+
+    // 尝试直接匹配 sanitizedModelID
+    if mappedModel, exists := modelMap[sanitizedModelID]; exists {
+        return mappedModel
+    }
+
+    // 如果没有直接匹配，尝试关键词匹配
+    // 例如，检查 modelMap 的值是否包含 sanitizedModelID
+    for modelName, youModel := range modelMap {
+        if strings.Contains(youModel, sanitizedModelID) {
+            return modelName
+        }
+    }
+
+    // 最后，返回默认模型
+    return "deepseek-chat"
+}
+
+// getReverseModelMap 创建并返回 modelMap 的反向映射（You.com 模型名称 -> OpenAI 模型名称）。
+func getReverseModelMap() map[string]string {
+    reverse := make(map[string]string, len(modelMap))
+    for k, v := range modelMap {
+        reverse[v] = k
+    }
+    return reverse
+}
+
+// mapModelName 将 OpenAI 模型名称映射到 You.com 模型名称。
+func mapModelName(openAIModel string) string {
+    if useDynamicModels {
+        if mappedModel, exists := dynamicModelMap[openAIModel]; exists {
+            return mappedModel
+        }
+    } else {
+        if mappedModel, exists := modelMap[openAIModel]; exists {
+            return mappedModel
+        }
+    }
+    return "deepseek_v3" // 默认模型
+}
+
+// reverseMapModelName 将 You.com 模型名称映射回 OpenAI 模型名称。
+func reverseMapModelName(youModel string) string {
+    reverseMap := getReverseModelMap() // 始终使用静态的反向映射，因为动态映射主要用于正向映射
+    if mappedModel, exists := reverseMap[youModel]; exists {
+        return mappedModel
+    }
+    return "deepseek-chat" // 默认模型
+}
+
+// originalModel 存储原始的 OpenAI 模型名称。
+var originalModel string
