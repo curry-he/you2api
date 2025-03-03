@@ -886,7 +886,7 @@ func mapModelName(openAIModel string) string {
 func reverseMapModelName(youModel string) string {
     reverseMap := getReverseModelMap() // 始终使用静态的反向映射，因为动态映射主要用于正向映射
     if mappedModel, exists := reverseMap[youModel]; exists {
-        return youModel // 这里返回 You.com 模型名称，因为要返回 You.com 支持的格式
+        return mappedModel // 返回 mappedModel 而不是 youModel
     }
     return "deepseek-chat" // 默认模型
 }
