@@ -136,7 +136,7 @@ var useDynamicModels = false
 type NextData struct {
     Props struct {
         PageProps struct {
-            ChatModeModels []struct {
+            AiModels []struct { // 将 ChatModeModels 修改为 AiModels，并匹配 JSON 结构中的 aiModels
                 ID             string `json:"id"`
                 Name           string `json:"name"`
                 Company        string `json:"company"`
@@ -146,43 +146,65 @@ type NextData struct {
                 IsAllowedForUserChatModes bool `json:"isAllowedForUserChatModes"`
                 ImageURL       string `json:"imageUrl"`
                 Tagline        string `json:"tagline"`
-            } `json:"chatModeModels"`
+            } `json:"aiModels"` // 确保 JSON tag 与 JSON 结构一致
         } `json:"pageProps"`
     } `json:"props"`
 }
 
+// ModelDetail 定义模型详情结构体，如果需要返回更详细的模型信息
+type ModelDetail struct {
+    ID      string `json:"id"`
+    Object  string `json:"object"`
+    Created int64  `json:"created"`
+    OwnedBy string `json:"owned_by"`
+}
+
+// getCookies 模拟获取 cookies，这里仅为示例，实际情况可能需要更复杂的逻辑
+func getCookies(dsToken string) map[string]string {
+    // 这里根据你的实际情况填充 cookie 获取逻辑
+    // 例如，如果 dsToken 是一个有效的 token，你可能需要用它来请求一个接口获取 cookies
+    // 这里为了演示，简单返回一个空的 map
+    return map[string]string{}
+}
+
 // fetchModelList 从 you.com 动态获取模型列表
-func fetchModelList() (map[string]string, []ModelDetail, error) {
-    resp, err := http.Get("https://you.com/")
+func fetchModelList(dsToken string) (map[string]string, []ModelDetail, error) {
+    youReq, _ := http.NewRequest("GET", "https://you.com", nil) // Or the correct page URL
+    if dsToken != "" {
+        cookies := getCookies(dsToken)
+        var cookieStrings []string
+        for name, value := range cookies {
+            cookieStrings = append(cookieStrings, fmt.Sprintf("%s=%s", name, value))
+        }
+        youReq.Header.Add("Cookie", strings.Join(cookieStrings, ";"))
+    }
+    youReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 Edg/133.0.0.0") // Mimic browser
+    client := &http.Client{}
+    resp, err := client.Do(youReq)
     if err != nil {
-        return nil, nil, fmt.Errorf("failed to fetch you.com: %w", err)
+        return nil, nil, fmt.Errorf("failed to fetch you.com page: %w", err)
     }
     defer resp.Body.Close()
-
+    if resp.StatusCode != http.StatusOK {
+        body, _ := io.ReadAll(resp.Body)
+        return nil, nil, fmt.Errorf("failed to fetch you.com page, status: %d, body: %s", resp.StatusCode, string(body))
+    }
     doc, err := goquery.NewDocumentFromReader(resp.Body)
     if err != nil {
         return nil, nil, fmt.Errorf("failed to parse HTML: %w", err)
     }
-
     script := doc.Find("script#__NEXT_DATA__").Text()
     var nextData NextData
     if err := json.Unmarshal([]byte(script), &nextData); err != nil {
         return nil, nil, fmt.Errorf("failed to parse JSON: %w", err)
     }
-
     modelMap := make(map[string]string)
     models := make([]ModelDetail, 0)
     created := time.Now().Unix()
-
-    for _, model := range nextData.Props.PageProps.ChatModeModels {
-        // 映射 OpenAI 模型名称 (假设 OpenAI 风格的名称可以通过某种方式从 You.com 的 name 或 id 推断出来)
-        openAIModelName := reverseMapYouModelNameToOpenAI(model.ID) // 尝试反向映射，如果找不到则使用默认逻辑
-        if openAIModelName == "" {
-            openAIModelName = model.ID // 如果反向映射失败，直接使用 You.com 的 ID 作为 OpenAI 模型名 (需要进一步完善映射逻辑)
-        }
-        modelMap[openAIModelName] = model.ID
+    for _, model := range nextData.Props.PageProps.AiModels { // 修改为 AiModels
+        modelMap[model.ID] = model.ID // 这里模型名称映射可以根据实际需求调整，如果不需要映射，直接使用 model.ID
         models = append(models, ModelDetail{
-            ID:      openAIModelName,
+            ID:      model.ID,
             Object:  "model",
             Created: created,
             OwnedBy: model.Company, // 使用动态获取的 Company
@@ -190,6 +212,7 @@ func fetchModelList() (map[string]string, []ModelDetail, error) {
     }
     return modelMap, models, nil
 }
+
 
 // reverseMapYouModelNameToOpenAI 将 You.com 模型 ID 转换为 OpenAI 风格的模型名称
 // 规则：将模型 ID 中的 '-' 和 '.' 替换为 '_', 并进行其他必要的格式统一
