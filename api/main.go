@@ -846,7 +846,7 @@ func reverseMapYouModelNameToOpenAI(youModelID string) string {
         "mistral_medium_2402":        "mistral-medium-2402",
         "mistral_small_2402":         "mistral-small-2402",
     }
-    if openaiModelName, exists := explicitMap[sanitizedModelID]; exists {
+    if openaiModelName, exists := explicitMap[replacedDecimal]; exists {
         return openaiModelName
     }
 
